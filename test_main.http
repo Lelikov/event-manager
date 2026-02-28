@@ -1,0 +1,78 @@
+# Health check
+GET http://127.0.0.1:8000/health
+Accept: application/json
+
+###
+
+# CloudEvent -> events.user (matches source: urn:svc:user-*, type: user.*)
+POST http://127.0.0.1:8000/event
+Content-Type: application/json
+ce-specversion: 1.0
+ce-id: 7f11f4d5-2f65-4e59-b9ed-6b6f8e80c971
+ce-source: urn:svc:user-api
+ce-type: user.created
+ce-time: 2026-02-27T19:00:00Z
+
+{
+  "user_id": "u-1001",
+  "email": "user@example.com"
+}
+
+###
+
+# Frontend freeform -> wrapped with JWT and routed by source/type
+POST http://127.0.0.1:8000/ingest/frontend
+Content-Type: application/json
+x-frontend-jwt: <JWT_WITH_iss_aud_source_type_payload_sha256>
+
+{
+  "source": "urn:svc:user-frontend",
+  "type": "user.profile.updated",
+  "payload": {
+    "user_id": "u-1001",
+    "display_name": "Alex"
+  }
+}
+
+###
+
+# Backend signed JSON -> verified by x-backend-signature
+# signature for body {"order_id":"o-9001","status":"paid"}
+POST http://127.0.0.1:8000/ingest/backend
+Content-Type: application/json
+x-backend-signature: bb4d129f51dde95efabc7a0c5b214f0bf6be077bca17ccf567c4ac16cf90bd2b
+
+{"order_id":"o-9001","status":"paid"}
+
+###
+
+# CloudEvent -> events.billing (matches source: urn:svc:billing, type: billing.*)
+POST http://127.0.0.1:8000/event
+Content-Type: application/json
+ce-specversion: 1.0
+ce-id: 5d7f6b65-ea4f-4fdf-a3b8-1d4c64d5f4ce
+ce-source: urn:svc:billing
+ce-type: billing.invoice.paid
+ce-time: 2026-02-27T19:05:00Z
+
+{
+  "invoice_id": "inv-9001",
+  "amount": 199.99,
+  "currency": "USD"
+}
+
+###
+
+# CloudEvent -> events.unrouted (default fallback)
+POST http://127.0.0.1:8000/event
+Content-Type: application/json
+ce-specversion: 1.0
+ce-id: 1c4d4452-0d51-4ef8-81ec-b2fd6d0a84ab
+ce-source: urn:svc:unknown
+ce-type: unknown.event
+
+{
+  "payload": "no matching route"
+}
+
+###
