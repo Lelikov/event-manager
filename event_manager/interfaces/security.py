@@ -1,15 +1,15 @@
 from typing import Any, Protocol
 
 
-class IFrontendJWTVerifier(Protocol):
+class IAuthorizationJWTVerifier(Protocol):
+    def verify_signature(self, *, token: str) -> dict[str, Any]: ...
+
     def verify(
         self,
         *,
         token: str,
-        payload: dict[str, Any],
-        source: str,
+        event_source: str,
         event_type: str,
-        require_payload_digest: bool = True,
     ) -> dict[str, Any]: ...
 
 

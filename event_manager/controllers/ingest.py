@@ -8,8 +8,7 @@ from event_manager.config import Settings
 from event_manager.errors import BadRequestError, ConfigurationError, UnauthorizedError
 from event_manager.interfaces.ingest import IIngestController
 from event_manager.interfaces.publisher import ICloudEventPublisher
-from event_manager.interfaces.security import IBackendSignatureVerifier, IFrontendJWTVerifier
-from event_manager.schemas import FreeFormIngestRequest
+from event_manager.interfaces.security import IAuthorizationJWTVerifier, IBackendSignatureVerifier
 
 
 class IngestController(IIngestController):
@@ -18,13 +17,13 @@ class IngestController(IIngestController):
         *,
         settings: Settings,
         publisher: ICloudEventPublisher,
-        frontend_jwt_verifier: IFrontendJWTVerifier,
         backend_signature_verifier: IBackendSignatureVerifier,
+        authorization_jwt_verifier: IAuthorizationJWTVerifier,
     ) -> None:
         self._settings = settings
         self._publisher = publisher
-        self._frontend_jwt_verifier = frontend_jwt_verifier
         self._backend_signature_verifier = backend_signature_verifier
+        self._authorization_jwt_verifier = authorization_jwt_verifier
 
     async def ingest_cloudevent(self, *, headers: Mapping[str, str], body: bytes) -> None:
         try:
@@ -32,36 +31,18 @@ class IngestController(IIngestController):
         except Exception as exc:
             raise BadRequestError("Invalid CloudEvent payload or headers") from exc
 
-        await self._publisher.publish(
-            source=str(incoming.source),
+        claims = self._authorization_jwt_verifier.verify(
+            token=headers.get("Authorization"),
+            event_source=incoming.source,
             event_type=incoming.type,
-            data=incoming.data,
-            event_id=str(incoming.id),
-            event_time=str(incoming.time) if incoming.time else None,
         )
 
-    async def ingest_frontend(self, *, payload: FreeFormIngestRequest, token: str | None) -> None:
-        source = payload.source or self._settings.frontend_source
-        event_type = payload.type or self._settings.frontend_type
-
-        if not token:
-            raise UnauthorizedError(f"Missing JWT header: {self._settings.frontend_jwt_header}")
-
-        try:
-            self._frontend_jwt_verifier.verify(
-                token=token,
-                payload=payload.payload,
-                source=source,
-                event_type=event_type,
-                require_payload_digest=True,
-            )
-        except Exception as exc:
-            raise UnauthorizedError("Invalid frontend JWT or payload integrity mismatch") from exc
-
         await self._publisher.publish(
-            source=source,
-            event_type=event_type,
-            data=payload.payload,
+            source=incoming.source,
+            event_type=incoming.type,
+            data={**incoming.data, **claims},
+            event_id=incoming.id,
+            event_time=incoming.time,
         )
 
     async def ingest_backend(self, *, headers: Mapping[str, str], body: bytes) -> None:

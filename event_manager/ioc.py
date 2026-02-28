@@ -7,13 +7,13 @@ from event_manager.controllers import IngestController
 from event_manager.interfaces.ingest import IIngestController
 from event_manager.interfaces.publisher import ICloudEventPublisher, ITopologyManager
 from event_manager.interfaces.routing import IEventRouter
-from event_manager.interfaces.security import IBackendSignatureVerifier, IFrontendJWTVerifier
+from event_manager.interfaces.security import IAuthorizationJWTVerifier, IBackendSignatureVerifier
 from event_manager.routing import EventRouter
 from event_manager.security import (
+    AuthorizationJWTConfig,
+    AuthorizationJWTVerifier,
     BackendSignatureConfig,
     BackendSignatureVerifier,
-    FrontendJWTConfig,
-    FrontendJWTVerifier,
 )
 
 
@@ -43,13 +43,13 @@ class AppProvider(Provider):
         return EventRouter(settings.routing)
 
     @provide(scope=Scope.APP)
-    def provide_frontend_jwt_verifier(self, settings: Settings) -> IFrontendJWTVerifier:
-        return FrontendJWTVerifier(
-            FrontendJWTConfig(
-                verify_key=settings.frontend_jwt_verify_key,
-                algorithm=settings.frontend_jwt_algorithm,
-                issuer=settings.frontend_jwt_issuer,
-                audience=settings.frontend_jwt_audience,
+    def provide_authorization_jwt_verifier(self, settings: Settings) -> IAuthorizationJWTVerifier:
+        return AuthorizationJWTVerifier(
+            AuthorizationJWTConfig(
+                verify_key=settings.authorization_jwt_verify_key,
+                algorithm=settings.authorization_jwt_algorithm,
+                issuer=settings.authorization_jwt_issuer,
+                audience=settings.authorization_jwt_audience,
             ),
         )
 
@@ -93,12 +93,12 @@ class AppProvider(Provider):
         self,
         settings: Settings,
         publisher: ICloudEventPublisher,
-        frontend_jwt_verifier: IFrontendJWTVerifier,
         backend_signature_verifier: IBackendSignatureVerifier,
+        authorization_jwt_verifier: IAuthorizationJWTVerifier,
     ) -> IIngestController:
         return IngestController(
             settings=settings,
             publisher=publisher,
-            frontend_jwt_verifier=frontend_jwt_verifier,
             backend_signature_verifier=backend_signature_verifier,
+            authorization_jwt_verifier=authorization_jwt_verifier,
         )

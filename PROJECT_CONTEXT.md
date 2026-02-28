@@ -1,7 +1,7 @@
 # Project Context: event-manager
 
 ## Overview
-`event-manager` — это ingress-микросервис для приёма событий из нескольких источников (CloudEvents, frontend, backend),
+`event-manager` — это ingress-микросервис для приёма событий из нескольких источников (CloudEvents, backend),
 валидации целостности/подлинности и публикации нормализованных CloudEvents в RabbitMQ.
 
 После рефакторинга сервис приведён к стилю `calendar-bot`:
@@ -21,14 +21,11 @@
 ## HTTP API
 - `POST /event/cloudevents`
   - Принимает входящий CloudEvent,
+  - требует JWT в `Authorization` (Bearer),
+  - валидирует подпись JWT на входе endpoint,
+  - дополнительная проверка claims/payload может выполняться позже в контроллере,
   - валидирует структуру,
   - публикует как CloudEvent в RabbitMQ с routing key на основе правил роутинга.
-
-- `POST /ingest/frontend`
-  - Принимает `FreeFormIngestRequest` (source/type/payload),
-  - требует JWT в заголовке `frontend_jwt_header`,
-  - проверяет claims + digest payload,
-  - публикует событие в RabbitMQ.
 
 - `POST /ingest/backend`
   - Принимает CloudEvent или JSON object,
@@ -44,7 +41,7 @@
   - `ingest.py` — `IIngestController`
   - `publisher.py` — `ICloudEventPublisher`, `ITopologyManager`
   - `routing.py` — `IEventRouter`
-  - `security.py` — `IFrontendJWTVerifier`, `IBackendSignatureVerifier`
+  - `security.py` — `IAuthorizationJWTVerifier`, `IBackendSignatureVerifier`
 
 - `event_manager/controllers/`
   - `ingest.py` — оркестрация всех ingest-сценариев, валидации и публикации.
@@ -61,7 +58,7 @@
   - `routing.py` — правила и реализация event routing,
   - `security.py` — JWT/HMAC verifiers,
   - `errors.py` — доменные ошибки ingest-конвейера,
-  - `schemas.py` — входные DTO для API.
+  - `schemas.py` — модуль под будущие DTO (сейчас минимальный).
 
 ## DI / IoC (Dishka)
 `event_manager/ioc.py` (`AppProvider`) регистрирует:
@@ -69,7 +66,7 @@
   - `Settings`
   - FastStream `RabbitRouter` / `RabbitBroker` / `RabbitExchange`
   - `IEventRouter` -> `EventRouter`
-  - `IFrontendJWTVerifier` -> `FrontendJWTVerifier`
+  - `IAuthorizationJWTVerifier` -> `AuthorizationJWTVerifier`
   - `IBackendSignatureVerifier` -> `BackendSignatureVerifier`
   - `ICloudEventPublisher` -> `CloudEventPublisher`
   - `ITopologyManager` -> `RabbitTopologyManager`
@@ -91,9 +88,9 @@
 ## Configuration
 Основные переменные в `Settings`:
 - RabbitMQ: `rabbit_url`, `rabbit_exchange`, `default_rabbit_destination`, `event_routing_rules`, `rabbit_topology_queues`
-- Frontend auth: `frontend_jwt_verify_key`, `frontend_jwt_header`, `frontend_jwt_algorithm`, `frontend_jwt_issuer`, `frontend_jwt_audience`
+- Authorization JWT: `authorization_jwt_verify_key`, `authorization_jwt_algorithm`, `authorization_jwt_issuer`, `authorization_jwt_audience`
 - Backend auth: `backend_signature_secret`, `backend_signature_header`, `backend_signature_algorithm`
-- Source/type defaults: `frontend_source/frontend_type`, `backend_source/backend_type`
+- Source/type defaults: `backend_source/backend_type`
 
 ## Conventions for Future Tasks
 1. Сначала добавлять/расширять Protocol в `event_manager/interfaces`.

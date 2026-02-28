@@ -6,20 +6,33 @@ from typing import Any
 
 import jwt
 
-from event_manager.interfaces import IBackendSignatureVerifier, IFrontendJWTVerifier
+from event_manager.errors import UnauthorizedError
+from event_manager.interfaces import IAuthorizationJWTVerifier, IBackendSignatureVerifier
 
 
 @dataclass(frozen=True)
-class FrontendJWTConfig:
+class AuthorizationJWTConfig:
     verify_key: str
     algorithm: str
     issuer: str
     audience: str
 
 
-class FrontendJWTVerifier(IFrontendJWTVerifier):
-    def __init__(self, config: FrontendJWTConfig) -> None:
+class AuthorizationJWTVerifier(IAuthorizationJWTVerifier):
+    def __init__(self, config: AuthorizationJWTConfig) -> None:
         self._config = config
+
+    def verify_signature(self, *, token: str) -> dict[str, Any]:
+        try:
+            return jwt.decode(
+                token,
+                self._config.verify_key,
+                algorithms=[self._config.algorithm],
+                audience=self._config.audience,
+                issuer=self._config.issuer,
+            )
+        except jwt.PyJWTError as exc:
+            raise UnauthorizedError("Invalid JWT signature") from exc
 
     @staticmethod
     def _payload_digest(payload: dict[str, Any]) -> str:
@@ -30,36 +43,31 @@ class FrontendJWTVerifier(IFrontendJWTVerifier):
         self,
         *,
         token: str,
-        payload: dict[str, Any],
-        source: str,
+        event_source: str,
         event_type: str,
-        require_payload_digest: bool = True,
     ) -> dict[str, Any]:
         claims: dict[str, Any] = jwt.decode(
             token,
-            self._config.verify_key,
-            algorithms=[self._config.algorithm],
-            audience=self._config.audience,
-            issuer=self._config.issuer,
+            options={
+                "verify_signature": False,
+                "verify_exp": True,
+                "verify_iat": True,
+                "verify_nbf": True,
+                "verify_aud": False,
+                "verify_iss": False,
+            },
         )
 
-        token_source = claims.get("source")
-        token_type = claims.get("type")
-        if token_source is not None and token_source != source:
+        source = claims.get("source")
+        _type = claims.get("type")
+        if source and source != event_source:
             raise ValueError("JWT source claim does not match request source")
-        if token_type is not None and token_type != event_type:
+        if _type and _type != event_type:
             raise ValueError("JWT type claim does not match request type")
 
-        payload_sha256 = claims.get("payload_sha256")
-        if require_payload_digest and payload_sha256 is None:
-            raise ValueError("JWT payload_sha256 claim is required")
+        excluded_fields = {"source", "type", "exp", "iat", "nbf", "aud", "iss", "sub"}
 
-        if payload_sha256 is not None:
-            actual_digest = self._payload_digest(payload)
-            if not hmac.compare_digest(str(payload_sha256), actual_digest):
-                raise ValueError("JWT payload_sha256 does not match request payload")
-
-        return claims
+        return {k: v for k, v in claims.items() if k not in excluded_fields}
 
 
 @dataclass(frozen=True)

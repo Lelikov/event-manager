@@ -35,22 +35,17 @@ class AppSettings(BaseSettings):
     event_routing_rules: list[RouteRule] = Field(default_factory=_default_route_rules)
     rabbit_topology_queues: list[str] = Field(default_factory=list)
 
-    frontend_jwt_verify_key: str = "dev-frontend-jwt-secret"
-    frontend_jwt_header: str = "x-frontend-jwt"
-    frontend_jwt_algorithm: str = "HS256"
-    frontend_jwt_issuer: str = "event-manager"
-    frontend_jwt_audience: str = "event-manager-ingest"
+    authorization_jwt_verify_key: str = "dev-authorization-jwt-secret"
+    authorization_jwt_algorithm: str = "HS256"
+    authorization_jwt_issuer: str = "event-manager"
+    authorization_jwt_audience: str = "event-manager-ingest"
 
     backend_signature_secret: str = "dev-backend-signature-secret"  # noqa: S105
     backend_signature_header: str = "x-backend-signature"
     backend_signature_algorithm: str = "sha256"
 
-    frontend_source: str = "urn:ingress:frontend"
-    frontend_type: str = "frontend.event"
     backend_source: str = "urn:ingress:backend"
     backend_type: str = "backend.event"
-    freeform_source: str = "urn:ingress:freeform"
-    freeform_type: str = "freeform.event"
 
     @property
     def routing_destinations(self) -> set[str]:
