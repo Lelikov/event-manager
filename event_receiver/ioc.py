@@ -1,15 +1,15 @@
 from dishka import Provider, Scope, provide
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, fastapi
 
-from event_manager.adapters import CloudEventPublisher, RabbitTopologyManager
-from event_manager.config import Settings
-from event_manager.controllers import IngestController
-from event_manager.interfaces.ingest import IIngestController
-from event_manager.interfaces.publisher import ICloudEventPublisher, ITopologyManager
-from event_manager.interfaces.routing import IEventRouter
-from event_manager.interfaces.security import IAuthorizationJWTVerifier
-from event_manager.routing import EventRouter
-from event_manager.security import AuthorizationJWTConfig, AuthorizationJWTVerifier
+from event_receiver.adapters import CloudEventPublisher, RabbitTopologyManager
+from event_receiver.config import Settings
+from event_receiver.controllers import IngestController
+from event_receiver.interfaces.ingest import IIngestController
+from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
+from event_receiver.interfaces.routing import IEventRouter
+from event_receiver.interfaces.security import IAuthorizationJWTVerifier
+from event_receiver.routing import EventRouter
+from event_receiver.security import AuthorizationJWTConfig, AuthorizationJWTVerifier
 
 
 class AppProvider(Provider):

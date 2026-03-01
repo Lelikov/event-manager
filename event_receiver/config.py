@@ -3,7 +3,7 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from event_manager.routing import RouteRule, RoutingConfig
+from event_receiver.routing import RouteRule, RoutingConfig
 
 
 def _default_route_rules() -> list[RouteRule]:
@@ -34,6 +34,9 @@ class AppSettings(BaseSettings):
         extra="ignore",
     )
 
+    debug: bool = False
+    log_level: str = "INFO"
+
     rabbit_url: str = "amqp://guest:guest@localhost:5672/"
     rabbit_exchange: str = "events"
     default_rabbit_destination: str = "events.unrouted"
@@ -46,9 +49,6 @@ class AppSettings(BaseSettings):
     authorization_jwt_audience: str = "event-manager-ingest"
 
     email_api_key: str = "dev-unisender-go-api-key"
-
-    backend_source: str = "urn:ingress:backend"
-    backend_type: str = "backend.event"
 
     @property
     def routing_destinations(self) -> set[str]:

@@ -1,1 +1,0 @@
-from event_manager.controllers.ingest import IngestController

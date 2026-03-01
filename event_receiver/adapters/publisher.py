@@ -4,8 +4,8 @@ from typing import Any
 from cloudevents.http import CloudEvent, to_binary
 from faststream.rabbit import RabbitBroker, RabbitExchange, RabbitQueue
 
-from event_manager.interfaces.publisher import ICloudEventPublisher, ITopologyManager
-from event_manager.interfaces.routing import IEventRouter
+from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
+from event_receiver.interfaces.routing import IEventRouter
 
 
 logger = logging.getLogger(__name__)

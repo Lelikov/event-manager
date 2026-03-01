@@ -5,8 +5,8 @@ from typing import Any
 
 import jwt
 
-from event_manager.errors import UnauthorizedError
-from event_manager.interfaces import IAuthorizationJWTVerifier
+from event_receiver.errors import UnauthorizedError
+from event_receiver.interfaces import IAuthorizationJWTVerifier
 
 
 @dataclass(frozen=True)

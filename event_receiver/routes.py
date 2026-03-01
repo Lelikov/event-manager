@@ -4,8 +4,8 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from event_manager.errors import BadRequestError, ConfigurationError, IngestError, UnauthorizedError
-from event_manager.interfaces.ingest import IIngestController
+from event_receiver.errors import BadRequestError, ConfigurationError, IngestError, UnauthorizedError
+from event_receiver.interfaces.ingest import IIngestController
 
 
 root_router = APIRouter(route_class=DishkaRoute)

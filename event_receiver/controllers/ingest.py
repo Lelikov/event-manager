@@ -6,11 +6,11 @@ from collections.abc import Mapping
 import ujson
 from cloudevents.pydantic import from_http
 
-from event_manager.config import Settings
-from event_manager.errors import BadRequestError, ConfigurationError, UnauthorizedError
-from event_manager.interfaces.ingest import IIngestController
-from event_manager.interfaces.publisher import ICloudEventPublisher
-from event_manager.interfaces.security import IAuthorizationJWTVerifier
+from event_receiver.config import Settings
+from event_receiver.errors import BadRequestError, ConfigurationError, UnauthorizedError
+from event_receiver.interfaces.ingest import IIngestController
+from event_receiver.interfaces.publisher import ICloudEventPublisher
+from event_receiver.interfaces.security import IAuthorizationJWTVerifier
 
 
 class IngestController(IIngestController):
