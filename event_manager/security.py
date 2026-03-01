@@ -1,5 +1,4 @@
 import hashlib
-import hmac
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -7,7 +6,7 @@ from typing import Any
 import jwt
 
 from event_manager.errors import UnauthorizedError
-from event_manager.interfaces import IAuthorizationJWTVerifier, IBackendSignatureVerifier
+from event_manager.interfaces import IAuthorizationJWTVerifier
 
 
 @dataclass(frozen=True)
@@ -68,31 +67,3 @@ class AuthorizationJWTVerifier(IAuthorizationJWTVerifier):
         excluded_fields = {"source", "type", "exp", "iat", "nbf", "aud", "iss", "sub"}
 
         return {k: v for k, v in claims.items() if k not in excluded_fields}
-
-
-@dataclass(frozen=True)
-class BackendSignatureConfig:
-    secret: str
-    algorithm: str
-
-
-class BackendSignatureVerifier(IBackendSignatureVerifier):
-    def __init__(self, config: BackendSignatureConfig) -> None:
-        self._config = config
-
-    def verify(self, *, body: bytes, signature_header: str) -> bool:
-        digest_name = self._config.algorithm.lower()
-        if digest_name not in hashlib.algorithms_available:
-            raise ValueError(f"Unsupported signature algorithm: {self._config.algorithm}")
-
-        signature_value = signature_header.strip()
-        prefix = f"{digest_name}="
-        signature_value = signature_value.removeprefix(prefix)
-
-        expected = hmac.new(
-            self._config.secret.encode("utf-8"),
-            body,
-            digestmod=getattr(hashlib, digest_name),
-        ).hexdigest()
-
-        return hmac.compare_digest(signature_value, expected)

@@ -7,14 +7,9 @@ from event_manager.controllers import IngestController
 from event_manager.interfaces.ingest import IIngestController
 from event_manager.interfaces.publisher import ICloudEventPublisher, ITopologyManager
 from event_manager.interfaces.routing import IEventRouter
-from event_manager.interfaces.security import IAuthorizationJWTVerifier, IBackendSignatureVerifier
+from event_manager.interfaces.security import IAuthorizationJWTVerifier
 from event_manager.routing import EventRouter
-from event_manager.security import (
-    AuthorizationJWTConfig,
-    AuthorizationJWTVerifier,
-    BackendSignatureConfig,
-    BackendSignatureVerifier,
-)
+from event_manager.security import AuthorizationJWTConfig, AuthorizationJWTVerifier
 
 
 class AppProvider(Provider):
@@ -54,15 +49,6 @@ class AppProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
-    def provide_backend_signature_verifier(self, settings: Settings) -> IBackendSignatureVerifier:
-        return BackendSignatureVerifier(
-            BackendSignatureConfig(
-                secret=settings.backend_signature_secret,
-                algorithm=settings.backend_signature_algorithm,
-            ),
-        )
-
-    @provide(scope=Scope.APP)
     def provide_publisher(
         self,
         broker: RabbitBroker,
@@ -93,12 +79,10 @@ class AppProvider(Provider):
         self,
         settings: Settings,
         publisher: ICloudEventPublisher,
-        backend_signature_verifier: IBackendSignatureVerifier,
         authorization_jwt_verifier: IAuthorizationJWTVerifier,
     ) -> IIngestController:
         return IngestController(
             settings=settings,
             publisher=publisher,
-            backend_signature_verifier=backend_signature_verifier,
             authorization_jwt_verifier=authorization_jwt_verifier,
         )

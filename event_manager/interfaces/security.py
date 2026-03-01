@@ -11,7 +11,3 @@ class IAuthorizationJWTVerifier(Protocol):
         event_source: str,
         event_type: str,
     ) -> dict[str, Any]: ...
-
-
-class IBackendSignatureVerifier(Protocol):
-    def verify(self, *, body: bytes, signature_header: str) -> bool: ...

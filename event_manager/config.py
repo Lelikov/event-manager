@@ -18,6 +18,11 @@ def _default_route_rules() -> list[RouteRule]:
             source_pattern="urn:svc:billing",
             type_pattern="billing.*",
         ),
+        RouteRule(
+            destination="events.mail",
+            source_pattern="unisender-go",
+            type_pattern="unisender.*",
+        ),
     ]
 
 
@@ -40,9 +45,7 @@ class AppSettings(BaseSettings):
     authorization_jwt_issuer: str = "event-manager"
     authorization_jwt_audience: str = "event-manager-ingest"
 
-    backend_signature_secret: str = "dev-backend-signature-secret"  # noqa: S105
-    backend_signature_header: str = "x-backend-signature"
-    backend_signature_algorithm: str = "sha256"
+    email_api_key: str = "dev-unisender-go-api-key"
 
     backend_source: str = "urn:ingress:backend"
     backend_type: str = "backend.event"
