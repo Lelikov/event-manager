@@ -1,8 +1,12 @@
 import fnmatch
 from dataclasses import dataclass
 
+import structlog
 from cloudevents.pydantic import CloudEvent
 from pydantic import BaseModel, Field
+
+
+logger = structlog.get_logger(__name__)
 
 
 class RouteRule(BaseModel):
@@ -24,6 +28,11 @@ class EventRouter:
     def __init__(self, config: RoutingConfig) -> None:
         self._default_destination = config.default_destination
         self._rules = config.rules
+        logger.debug(
+            "EventRouter initialized",
+            default_destination=self._default_destination,
+            rules_count=len(self._rules),
+        )
 
     def resolve_routing_key(self, event: CloudEvent) -> str:
         return self.resolve_routing_key_by_fields(
@@ -37,6 +46,20 @@ class EventRouter:
 
         for rule in self._rules:
             if rule.matches(source=source, event_type=event_type):
+                logger.debug(
+                    "Routing rule matched",
+                    source=source,
+                    event_type=event_type,
+                    destination=rule.destination,
+                    source_pattern=rule.source_pattern,
+                    type_pattern=rule.type_pattern,
+                )
                 return rule.destination
 
+        logger.debug(
+            "No routing rule matched, using default destination",
+            source=source,
+            event_type=event_type,
+            destination=self._default_destination,
+        )
         return self._default_destination
