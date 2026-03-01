@@ -1,11 +1,19 @@
+from typing import Any
+
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 
 from event_manager.errors import BadRequestError, ConfigurationError, IngestError, UnauthorizedError
 from event_manager.interfaces.ingest import IIngestController
 
 
 root_router = APIRouter(route_class=DishkaRoute)
+
+INGEST_ROUTE_TO_METHOD = {
+    "/event/cloudevents": "ingest_cloudevent",
+    "/event/unisender-go": "ingest_unisender_go",
+}
 
 
 def _raise_http_from_ingest_error(exc: IngestError) -> None:
@@ -18,20 +26,47 @@ def _raise_http_from_ingest_error(exc: IngestError) -> None:
     raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal ingest error") from exc
 
 
-@root_router.post("/event/cloudevents", status_code=status.HTTP_202_ACCEPTED)
-async def ingest_event(request: Request, ingest_controller: FromDishka[IIngestController]) -> None:
+async def _handle_ingest_request(
+    request: Request,
+    ingest_controller: IIngestController,
+    controller_method_name: str,
+) -> Any:
+    if request.method == "GET":
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
+
     try:
-        await ingest_controller.ingest_cloudevent(headers=request.headers, body=await request.body())
+        controller_method = getattr(ingest_controller, controller_method_name)
+        await controller_method(headers=request.headers, body=await request.body())
     except IngestError as exc:
         _raise_http_from_ingest_error(exc)
 
+    return None
 
-@root_router.post("/event/unisender-go", status_code=status.HTTP_202_ACCEPTED)
-async def ingest_unisender_go_event(request: Request, ingest_controller: FromDishka[IIngestController]) -> None:
-    try:
-        await ingest_controller.ingest_unisender_go(headers=request.headers, body=await request.body())
-    except IngestError as exc:
-        _raise_http_from_ingest_error(exc)
+
+def _register_ingest_routes() -> None:
+    for route_path, controller_method_name in INGEST_ROUTE_TO_METHOD.items():
+
+        async def ingest_endpoint(
+            request: Request,
+            ingest_controller: FromDishka[IIngestController],
+            _controller_method_name: str = controller_method_name,
+        ) -> Any:
+            return await _handle_ingest_request(
+                request=request,
+                ingest_controller=ingest_controller,
+                controller_method_name=_controller_method_name,
+            )
+
+        root_router.add_api_route(
+            route_path,
+            ingest_endpoint,
+            methods=["POST", "GET"],
+            status_code=status.HTTP_202_ACCEPTED,
+            response_model=None,
+        )
+
+
+_register_ingest_routes()
 
 
 @root_router.get("/health")
