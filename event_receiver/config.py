@@ -1,5 +1,3 @@
-from functools import lru_cache
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,7 +24,7 @@ def _default_route_rules() -> list[RouteRule]:
     ]
 
 
-class AppSettings(BaseSettings):
+class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -67,11 +65,3 @@ class AppSettings(BaseSettings):
             default_destination=self.default_rabbit_destination,
             rules=self.event_routing_rules,
         )
-
-
-@lru_cache(maxsize=1)
-def get_settings() -> AppSettings:
-    return AppSettings()
-
-
-Settings = AppSettings
