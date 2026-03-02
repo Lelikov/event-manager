@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import AmqpDsn, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from event_receiver.routing import RouteRule, RoutingConfig
@@ -7,19 +7,14 @@ from event_receiver.routing import RouteRule, RoutingConfig
 def _default_route_rules() -> list[RouteRule]:
     return [
         RouteRule(
-            destination="events.user",
-            source_pattern="urn:svc:user-*",
-            type_pattern="user.*",
-        ),
-        RouteRule(
-            destination="events.billing",
-            source_pattern="urn:svc:billing",
-            type_pattern="billing.*",
-        ),
-        RouteRule(
             destination="events.mail",
             source_pattern="unisender-go",
             type_pattern="unisender.*",
+        ),
+        RouteRule(
+            destination="events.message",
+            source_pattern="getstream",
+            type_pattern="getstream.*",
         ),
     ]
 
@@ -35,18 +30,21 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
 
-    rabbit_url: str = "amqp://guest:guest@localhost:5672/"
+    rabbit_url: AmqpDsn = "amqp://guest:guest@localhost:5672/"
     rabbit_exchange: str = "events"
     default_rabbit_destination: str = "events.unrouted"
     event_routing_rules: list[RouteRule] = Field(default_factory=_default_route_rules)
     rabbit_topology_queues: list[str] = Field(default_factory=list)
 
-    authorization_jwt_verify_key: str = "dev-authorization-jwt-secret"
+    authorization_jwt_verify_key: str = Field(strict=True)
     authorization_jwt_algorithm: str = "HS256"
-    authorization_jwt_issuer: str = "event-manager"
-    authorization_jwt_audience: str = "event-manager-ingest"
+    authorization_jwt_issuer: str = Field(strict=True)
+    authorization_jwt_audience: str = Field(strict=True)
 
-    email_api_key: str = "dev-unisender-go-api-key"
+    email_api_key: str = Field(strict=True)
+
+    getstream_api_key: str = Field(strict=True)
+    getstream_api_secret: str = Field(strict=True)
 
     @property
     def routing_destinations(self) -> set[str]:

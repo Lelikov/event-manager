@@ -6,6 +6,7 @@ from collections.abc import Mapping
 import structlog
 import ujson
 from cloudevents.pydantic import from_http
+from stream_chat import StreamChat
 
 from event_receiver.config import Settings
 from event_receiver.errors import BadRequestError, ConfigurationError, UnauthorizedError
@@ -93,6 +94,20 @@ class IngestController(IIngestController):
             source="unisender-go",
             event_type="unisender.events.transactional.status",
             data=ujson.loads(body),
+        )
+        logger.info("UniSender Go ingest completed")
+
+    async def ingest_getstream(self, *, headers: Mapping[str, str], body: bytes) -> None:
+        logger.info("Started Getstream ingest")
+        client = StreamChat(api_key=self._settings.getstream_api_key, api_secret=self._settings.getstream_api_secret)
+        if not client.verify_webhook(body, headers["X-SIGNATURE"]):
+            logger.warning("Getstream webhook failed: invalid signature")
+            raise UnauthorizedError("Invalid Getstream webhook signature")
+        data = ujson.loads(body)
+        await self._publisher.publish(
+            source="getstream",
+            event_type=f"getstream.events.{data.get('type', 'unknown')}",
+            data=data,
         )
         logger.info("UniSender Go ingest completed")
 
