@@ -32,7 +32,7 @@ class AppProvider(Provider):
     @provide(scope=Scope.APP)
     def provide_faststream_router(self, settings: Settings) -> fastapi.RabbitRouter:
         logger.info("Creating FastStream RabbitRouter", rabbit_url=settings.rabbit_url)
-        return fastapi.RabbitRouter(settings.rabbit_url)
+        return fastapi.RabbitRouter(str(settings.rabbit_url))
 
     @provide(scope=Scope.APP)
     def provide_broker(self, router: fastapi.RabbitRouter) -> RabbitBroker:

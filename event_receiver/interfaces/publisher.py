@@ -7,6 +7,7 @@ class ICloudEventPublisher(Protocol):
         *,
         source: str,
         event_type: str,
+        booking_id: str | None = None,
         data: dict[str, Any],
         event_id: str | None = None,
         event_time: str | None = None,

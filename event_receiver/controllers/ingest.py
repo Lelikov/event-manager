@@ -90,11 +90,14 @@ class IngestController(IIngestController):
             logger.warning("UniSender Go ingest failed: invalid auth signature")
             raise UnauthorizedError("Invalid UniSender Go auth signature")
 
-        await self._publisher.publish(
-            source="unisender-go",
-            event_type="unisender.events.transactional.status",
-            data=ujson.loads(body),
-        )
+        for event_by_user in ujson.loads(body).get("events_by_user", []):
+            for event in event_by_user.get("events", []):
+                await self._publisher.publish(
+                    source="unisender-go",
+                    event_type="unisender.events.v1.transactional.status.create",
+                    booking_id=event.get("event_data", {}).get("metadata", {}).get("booking_uid"),
+                    data=event,
+                )
         logger.info("UniSender Go ingest completed")
 
     async def ingest_getstream(self, *, headers: Mapping[str, str], body: bytes) -> None:
@@ -106,7 +109,8 @@ class IngestController(IIngestController):
         data = ujson.loads(body)
         await self._publisher.publish(
             source="getstream",
-            event_type=f"getstream.events.{data.get('type', 'unknown')}",
+            event_type=f"getstream.events.v1.{data.get('type', 'unknown')}.create",
+            booking_id=data.get("channel_id"),
             data=data,
         )
         logger.info("UniSender Go ingest completed")

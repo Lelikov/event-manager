@@ -28,6 +28,7 @@ class CloudEventPublisher(ICloudEventPublisher):
         *,
         source: str,
         event_type: str,
+        booking_id: str | None = None,
         data: dict[str, Any],
         event_id: str | None = None,
         event_time: str | None = None,
@@ -50,6 +51,8 @@ class CloudEventPublisher(ICloudEventPublisher):
             attributes["id"] = event_id
         if event_time:
             attributes["time"] = event_time
+        if booking_id:
+            attributes["booking_id"] = booking_id
 
         event = CloudEvent(attributes=attributes, data=data)
         headers, body = to_binary(event)
