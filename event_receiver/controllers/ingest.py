@@ -31,19 +31,19 @@ class IngestController(IIngestController):
         self._authorization_jwt_verifier = authorization_jwt_verifier
         logger.debug("IngestController initialized")
 
-    async def ingest_cloudevent(self, *, headers: Mapping[str, str], body: bytes) -> None:
-        logger.info("Started CloudEvent ingest", body=body)
+    async def ingest_jitsi(self, *, headers: Mapping[str, str], body: bytes) -> None:
+        logger.info("Started Jitsi ingest", body=body)
         self._authorization_jwt_verifier.verify_signature(token=headers.get("Authorization"))
-        logger.debug("JWT signature verification succeeded for CloudEvent ingest")
+        logger.debug("JWT signature verification succeeded for Jitsi ingest")
 
         try:
             incoming = from_http(headers=headers, data=body)
         except Exception as exc:
-            logger.warning("CloudEvent parsing failed")
-            raise BadRequestError("Invalid CloudEvent payload or headers") from exc
+            logger.warning("Jitsi parsing failed")
+            raise BadRequestError("Invalid Jitsi payload or headers") from exc
 
         logger.debug(
-            "CloudEvent parsed",
+            "Jitsi parsed",
             source=incoming.source,
             event_type=incoming.type,
             event_id=incoming.id,
@@ -59,12 +59,13 @@ class IngestController(IIngestController):
         await self._publisher.publish(
             source=incoming.source,
             event_type=incoming.type,
-            data={**incoming.data, **claims},
             event_id=incoming.id,
             event_time=incoming.time,
+            booking_id=claims.get("room"),
+            data={**incoming.data, **claims},
         )
         logger.info(
-            "CloudEvent ingest completed",
+            "Jitsi ingest completed",
             source=incoming.source,
             event_type=incoming.type,
             event_id=incoming.id,

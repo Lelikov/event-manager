@@ -13,7 +13,7 @@ root_router = APIRouter(route_class=DishkaRoute)
 logger = structlog.get_logger(__name__)
 
 INGEST_ROUTE_TO_METHOD = {
-    "/event/cloudevents": "ingest_cloudevent",
+    "/event/jitsi": "ingest_jitsi",
     "/event/unisender-go": "ingest_unisender_go",
     "/event/getstream": "ingest_getstream",
 }

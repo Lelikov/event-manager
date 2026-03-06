@@ -6,6 +6,7 @@ import structlog
 from dishka import make_async_container
 from dishka.integrations.fastapi import FastapiProvider, setup_dishka
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from faststream.rabbit import RabbitBroker
 
 from event_receiver.config import Settings
@@ -51,3 +52,11 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(title="event-manager", version="0.1.0", lifespan=lifespan)
 setup_dishka(container=container, app=app)
 app.include_router(root_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
