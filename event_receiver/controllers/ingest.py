@@ -71,6 +71,43 @@ class IngestController(IIngestController):
             event_id=incoming.id,
         )
 
+    async def ingest_booking(self, *, headers: Mapping[str, str], body: bytes) -> None:
+        logger.info("Started Booking ingest", body=body)
+        if self._settings.booking_api_key != headers.get("Authorization"):
+            logger.warning("Booking ingest failed: invalid API key")
+            raise UnauthorizedError("Invalid Booking API key")
+
+        try:
+            incoming = from_http(headers=headers, data=body)
+        except Exception as exc:
+            logger.warning("Booking parsing failed")
+            raise BadRequestError("Invalid Booking payload or headers") from exc
+
+        logger.debug(
+            "Booking parsed",
+            source=incoming.source,
+            event_type=incoming.type,
+            event_id=incoming.id,
+        )
+
+        booking_uid = incoming.data.pop("booking_uid")
+
+        await self._publisher.publish(
+            source=incoming.source,
+            event_type=incoming.type,
+            event_id=incoming.id,
+            event_time=incoming.time,
+            booking_id=booking_uid,
+            data=incoming.data,
+        )
+        logger.info(
+            "Booking ingest completed",
+            source=incoming.source,
+            event_type=incoming.type,
+            event_id=incoming.id,
+            booking_id=booking_uid,
+        )
+
     async def ingest_unisender_go(self, *, headers: Mapping[str, str], body: bytes) -> None:  # noqa: ARG002
         logger.info("Started UniSender Go ingest", body=body)
 

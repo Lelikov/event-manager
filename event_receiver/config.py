@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     getstream_api_key: str = Field(strict=True)
     getstream_api_secret: str = Field(strict=True)
 
+    booking_api_key: str = Field(strict=True)
+
     @property
     def routing_destinations(self) -> set[str]:
         destinations = {self.default_rabbit_destination}
