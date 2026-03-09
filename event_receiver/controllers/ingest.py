@@ -130,10 +130,12 @@ class IngestController(IIngestController):
 
         for event_by_user in ujson.loads(body).get("events_by_user", []):
             for event in event_by_user.get("events", []):
+                booking_uid = event.get("event_data", {}).get("metadata", {}).pop("booking_uid")
+                del event["event_data"]["metadata"]
                 await self._publisher.publish(
                     source="unisender-go",
                     event_type="unisender.events.v1.transactional.status.create",
-                    booking_id=event.get("event_data", {}).get("metadata", {}).get("booking_uid"),
+                    booking_id=booking_uid,
                     data=event,
                 )
         logger.info("UniSender Go ingest completed")

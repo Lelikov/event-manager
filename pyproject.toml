@@ -34,7 +34,7 @@ exclude = [
 fix = true
 unsafe-fixes = true
 show-fixes = true
-target-version = "py311"
+target-version = "py314"
 line-length = 120
 
 [tool.ruff.format]

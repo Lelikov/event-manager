@@ -7,12 +7,77 @@ from event_receiver.routing import RouteRule, RoutingConfig
 def _default_route_rules() -> list[RouteRule]:
     return [
         RouteRule(
+            destination="events.booking.lifecycle",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.booking.created.*",
+        ),
+        RouteRule(
+            destination="events.booking.lifecycle",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.booking.rescheduled.*",
+        ),
+        RouteRule(
+            destination="events.booking.lifecycle",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.booking.reassigned.*",
+        ),
+        RouteRule(
+            destination="events.booking.lifecycle",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.booking.cancelled.*",
+        ),
+        RouteRule(
+            destination="events.booking.reminder",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.booking.reminder_sent.*",
+        ),
+        RouteRule(
+            destination="events.chat.lifecycle",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.chat.created.*",
+        ),
+        RouteRule(
+            destination="events.chat.lifecycle",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.chat.deleted.*",
+        ),
+        RouteRule(
+            destination="events.chat.activity",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.chat.message_sent.*",
+        ),
+        RouteRule(
+            destination="events.meeting.lifecycle",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.meeting.url_created.*",
+        ),
+        RouteRule(
+            destination="events.meeting.lifecycle",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.meeting.url_deleted.*",
+        ),
+        RouteRule(
+            destination="events.notification.delivery",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.notification.email.message_sent.*",
+        ),
+        RouteRule(
+            destination="events.notification.delivery",
+            source_pattern="booking",
+            type_pattern="booking.events.v1.notification.telegram.message_sent.*",
+        ),
+        RouteRule(
+            destination="events.jitsi",
+            source_pattern="jitsi*",
+            type_pattern="*",
+        ),
+        RouteRule(
             destination="events.mail",
             source_pattern="unisender-go",
             type_pattern="unisender.*",
         ),
         RouteRule(
-            destination="events.message",
+            destination="events.chat",
             source_pattern="getstream",
             type_pattern="getstream.*",
         ),
