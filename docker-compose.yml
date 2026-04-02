@@ -6,3 +6,12 @@ services:
       - "5672:5672"
       - "15672:15672"
     restart: unless-stopped
+
+  event_receiver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    env_file: .env
+    ports:
+      - "${WEB_EXTERNAL_PORT:-8888}:8888"
