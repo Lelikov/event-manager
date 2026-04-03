@@ -110,6 +110,7 @@ class Settings(BaseSettings):
 
     getstream_api_key: str = Field(strict=True)
     getstream_api_secret: str = Field(strict=True)
+    getstream_user_id_encryption_key: str = Field(strict=True)
 
     booking_api_key: str = Field(strict=True)
 

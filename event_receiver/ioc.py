@@ -1,3 +1,6 @@
+import hashlib
+from typing import TYPE_CHECKING
+
 import structlog
 from dishka import Provider, Scope, provide
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, fastapi
@@ -5,12 +8,16 @@ from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, fastap
 from event_receiver.adapters import CloudEventPublisher, RabbitTopologyManager
 from event_receiver.config import Settings
 from event_receiver.controllers import IngestController
-from event_receiver.interfaces.ingest import IIngestController
-from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
-from event_receiver.interfaces.routing import IEventRouter
-from event_receiver.interfaces.security import IAuthorizationJWTVerifier
 from event_receiver.routing import EventRouter
 from event_receiver.security import AuthorizationJWTConfig, AuthorizationJWTVerifier
+from event_receiver.utils import decode_getstream_user_id
+
+
+if TYPE_CHECKING:
+    from event_receiver.interfaces.ingest import IIngestController
+    from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
+    from event_receiver.interfaces.routing import IEventRouter
+    from event_receiver.interfaces.security import IAuthorizationJWTVerifier
 
 
 logger = structlog.get_logger(__name__)
@@ -71,17 +78,31 @@ class AppProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
+    def provide_getstream_decoder(self, settings: Settings) -> callable[[str], str] | None:
+        """Provide a callable that decodes GetStream encrypted user IDs."""
+        # Hash the encryption key to get 32 bytes for AES-256
+        key = hashlib.sha256(settings.getstream_user_id_encryption_key.encode()).digest()
+
+        def decoder(encoded_user_id: str) -> str:
+            return decode_getstream_user_id(encoded_user_id=encoded_user_id, encryption_key=key)
+
+        logger.info("GetStream user ID decoder configured")
+        return decoder
+
+    @provide(scope=Scope.APP)
     def provide_publisher(
         self,
         broker: RabbitBroker,
         exchange: RabbitExchange,
         event_router: IEventRouter,
+        getstream_decoder: callable[[str], str] | None,
     ) -> ICloudEventPublisher:
         logger.info("Providing CloudEventPublisher")
         return CloudEventPublisher(
             broker=broker,
             exchange=exchange,
             router_by_event=event_router,
+            getstream_decoder=getstream_decoder,
         )
 
     @provide(scope=Scope.APP)

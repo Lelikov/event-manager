@@ -1,4 +1,4 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from cloudevents.http import CloudEvent, to_binary
@@ -6,8 +6,12 @@ from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPr
 from faststream.rabbit import RabbitBroker, RabbitExchange, RabbitQueue
 
 from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
-from event_receiver.interfaces.routing import IEventRouter
+from event_receiver.normalizers import normalize_event_payload
 from event_receiver.utils import generate_idempotency_key, generate_span_id, generate_trace_id
+
+
+if TYPE_CHECKING:
+    from event_receiver.interfaces.routing import IEventRouter
 
 
 logger = structlog.get_logger(__name__)
@@ -20,10 +24,12 @@ class CloudEventPublisher(ICloudEventPublisher):
         broker: RabbitBroker,
         exchange: RabbitExchange,
         router_by_event: IEventRouter,
+        getstream_decoder: callable[[str], str] | None = None,
     ) -> None:
         self._broker = broker
         self._exchange = exchange
         self._router_by_event = router_by_event
+        self._getstream_decoder = getstream_decoder
 
     async def publish(
         self,
@@ -66,6 +72,13 @@ class CloudEventPublisher(ICloudEventPublisher):
         schema_version = EVENT_SCHEMA_VERSIONS.get(event_type_enum, "v1")
         priority = EVENT_PRIORITIES.get(event_type_enum, EventPriority.NORMAL)
 
+        # Normalize payload to standard structure
+        normalized_data = normalize_event_payload(
+            event_type_enum,
+            data,
+            getstream_decoder=self._getstream_decoder,
+        )
+
         # Build CloudEvent attributes with extensions
         attributes = {
             "type": event_type_str,
@@ -86,7 +99,7 @@ class CloudEventPublisher(ICloudEventPublisher):
         if booking_id:
             attributes["booking_id"] = booking_id
 
-        event = CloudEvent(attributes=attributes, data=data)
+        event = CloudEvent(attributes=attributes, data=normalized_data)
         headers, body = to_binary(event)
 
         await self._broker.publish(

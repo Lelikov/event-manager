@@ -1,11 +1,13 @@
 [project]
-name = "event-manager"
+name = "event-receiver"
 version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.14"
 dependencies = [
     "cloudevents>=1.12.0",
+    "cryptography>=44.0.0",
     "dishka>=1.8.0",
+    "event-schemas @ git+https://github.com/Lelikov/event-schemas.git",
     "fastapi>=0.133.1",
     "faststream[rabbit]>=0.6.6",
     "pydantic-settings>=2.13.1",
