@@ -1,5 +1,5 @@
 import hashlib
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 import structlog
 from dishka import Provider, Scope, provide
@@ -8,18 +8,13 @@ from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, fastap
 from event_receiver.adapters import CloudEventPublisher, RabbitTopologyManager
 from event_receiver.config import Settings
 from event_receiver.controllers import IngestController
+from event_receiver.interfaces.ingest import IIngestController
+from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
+from event_receiver.interfaces.routing import IEventRouter
+from event_receiver.interfaces.security import IAuthorizationJWTVerifier
 from event_receiver.routing import EventRouter
 from event_receiver.security import AuthorizationJWTConfig, AuthorizationJWTVerifier
 from event_receiver.utils import decode_getstream_user_id
-
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from event_receiver.interfaces.ingest import IIngestController
-    from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
-    from event_receiver.interfaces.routing import IEventRouter
-    from event_receiver.interfaces.security import IAuthorizationJWTVerifier
 
 
 logger = structlog.get_logger(__name__)

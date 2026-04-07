@@ -100,12 +100,10 @@ def _participants_from_booking_created(payload: dict[str, Any]) -> list[dict[str
         {
             "email": validated.user.email,
             "role": "organizer",
-            "time_zone": validated.user.time_zone,
         },
         {
             "email": validated.client.email,
             "role": "client",
-            "time_zone": validated.client.time_zone,
         },
     ]
 
@@ -131,7 +129,7 @@ def _participants_from_unisender_status(payload: dict[str, Any]) -> list[dict[st
     email = validated.event_data.get("email")
     if not email or not isinstance(email, str):
         return []
-    return [{"email": email}]
+    return [{"email": email, "role": validated.event_data.get("metadata", {}).get("role")}]
 
 
 def _participants_from_getstream_event(
@@ -153,7 +151,11 @@ def _participants_from_getstream_event(
     except ValueError, UnicodeDecodeError, binascii.Error:
         return []
 
-    return [{"email": email}]
+    getstream_role = next((user for user in validated.members if user["user_id"] == user_id), {}).get("role")
+
+    role = "organizer" if getstream_role == "owner" else "client"
+
+    return [{"email": email, "role": role}]
 
 
 def _participants_from_jitsi_event(payload: dict[str, Any]) -> list[dict[str, Any]]:

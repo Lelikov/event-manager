@@ -11,6 +11,7 @@ class ICloudEventPublisher(Protocol):
         data: dict[str, Any],
         event_id: str | None = None,
         event_time: str | None = None,
+        trace_id: str | None = None,
     ) -> None: ...
 
 

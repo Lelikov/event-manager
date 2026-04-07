@@ -153,8 +153,8 @@ class IngestController(IIngestController):
         if not organizer or not client:
             raise BadRequestError("booking.created requires organizer and client in users")
         return {
-            "user": {"email": organizer["email"], "time_zone": organizer["time_zone"]},
-            "client": {"email": client["email"], "time_zone": client["time_zone"]},
+            "user": {"email": organizer["email"]},
+            "client": {"email": client["email"]},
             "start_time": data["start_time"],
             "end_time": data["end_time"],
         }
@@ -184,7 +184,6 @@ class IngestController(IIngestController):
         for event_by_user in ujson.loads(body).get("events_by_user", []):
             for event in event_by_user.get("events", []):
                 booking_uid = event.get("event_data", {}).get("metadata", {}).pop("booking_uid")
-                del event["event_data"]["metadata"]
                 await self._publisher.publish(
                     source="unisender-go",
                     event_type=EventType.UNISENDER_STATUS_CREATED,
