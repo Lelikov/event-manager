@@ -1,7 +1,7 @@
 import hashlib
 import hmac
 import re
-from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 import structlog
 import ujson
@@ -11,12 +11,17 @@ from event_schemas.types import EventType
 from pydantic import ValidationError
 from stream_chat import StreamChat
 
-from event_receiver.config import Settings
 from event_receiver.errors import BadRequestError, ConfigurationError, UnauthorizedError
 from event_receiver.interfaces.ingest import IIngestController
-from event_receiver.interfaces.publisher import ICloudEventPublisher
-from event_receiver.interfaces.security import IAuthorizationJWTVerifier
 from event_receiver.utils import extract_trace_id_from_headers
+
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from event_receiver.config import Settings
+    from event_receiver.interfaces.publisher import ICloudEventPublisher
+    from event_receiver.interfaces.security import IAuthorizationJWTVerifier
 
 
 logger = structlog.get_logger(__name__)
@@ -103,24 +108,22 @@ class IngestController(IIngestController):
             trace_id=trace_id,
         )
 
-        # Extract booking_uid
-        booking_uid = incoming.data.pop("booking_uid")
+        booking_uid = incoming.data.pop("booking_uid", None)
+        if not booking_uid:
+            raise BadRequestError("Missing booking_uid in payload")
 
-        # Validate schema (example for booking.created - extend for other types)
-        if incoming.type == EventType.BOOKING_CREATED.value:
+        if incoming.type == EventType.BOOKING_CREATED:
+            payload_dict = self._transform_booking_created_payload(incoming.data)
             try:
-                # Validate payload schema
-                validated_payload = BookingCreatedPayload(**incoming.data)
-                payload_dict = validated_payload.model_dump()
+                BookingCreatedPayload(**payload_dict)
             except ValidationError as exc:
-                logger.error(
+                logger.exception(
                     "Booking schema validation failed",
                     event_type=incoming.type,
                     validation_errors=exc.errors(),
                 )
                 raise BadRequestError(f"Invalid booking payload schema: {exc}") from exc
         else:
-            # For other event types, pass through (TODO: add validation for all types)
             payload_dict = incoming.data
 
         await self._publisher.publish(
@@ -141,7 +144,22 @@ class IngestController(IIngestController):
             trace_id=trace_id,
         )
 
-    async def ingest_unisender_go(self, *, headers: Mapping[str, str], body: bytes) -> None:  # noqa: ARG002
+    @staticmethod
+    def _transform_booking_created_payload(data: dict[str, Any]) -> dict[str, Any]:
+        """Transform users list from booking.created into user/client structure expected by BookingCreatedPayload."""
+        users = data.get("users", [])
+        organizer = next((u for u in users if u.get("role") == "organizer"), None)
+        client = next((u for u in users if u.get("role") == "client"), None)
+        if not organizer or not client:
+            raise BadRequestError("booking.created requires organizer and client in users")
+        return {
+            "user": {"email": organizer["email"], "time_zone": organizer["time_zone"]},
+            "client": {"email": client["email"], "time_zone": client["time_zone"]},
+            "start_time": data["start_time"],
+            "end_time": data["end_time"],
+        }
+
+    async def ingest_unisender_go(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
 
         logger.info("Started UniSender Go ingest", body=body, trace_id=trace_id)
@@ -187,7 +205,7 @@ class IngestController(IIngestController):
         data = ujson.loads(body)
         await self._publisher.publish(
             source="getstream",
-            event_type=f"getstream.events.v1.{data.get('type', 'unknown')}.create",
+            event_type=f"getstream.{data.get('type', 'unknown')}",
             booking_id=data.get("channel_id"),
             data=data,
             trace_id=trace_id,

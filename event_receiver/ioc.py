@@ -14,6 +14,8 @@ from event_receiver.utils import decode_getstream_user_id
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from event_receiver.interfaces.ingest import IIngestController
     from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
     from event_receiver.interfaces.routing import IEventRouter
@@ -78,7 +80,7 @@ class AppProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
-    def provide_getstream_decoder(self, settings: Settings) -> callable[[str], str] | None:
+    def provide_getstream_decoder(self, settings: Settings) -> Callable:
         """Provide a callable that decodes GetStream encrypted user IDs."""
         # Hash the encryption key to get 32 bytes for AES-256
         key = hashlib.sha256(settings.getstream_user_id_encryption_key.encode()).digest()
@@ -95,7 +97,7 @@ class AppProvider(Provider):
         broker: RabbitBroker,
         exchange: RabbitExchange,
         event_router: IEventRouter,
-        getstream_decoder: callable[[str], str] | None,
+        getstream_decoder: Callable,
     ) -> ICloudEventPublisher:
         logger.info("Providing CloudEventPublisher")
         return CloudEventPublisher(

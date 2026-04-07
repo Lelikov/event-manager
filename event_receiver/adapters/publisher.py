@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from cloudevents.http import CloudEvent, to_binary
 from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPriority, EventType
-from faststream.rabbit import RabbitBroker, RabbitExchange, RabbitQueue
+from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
 
 from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
 from event_receiver.normalizers import normalize_event_payload
@@ -144,7 +144,7 @@ class RabbitTopologyManager(ITopologyManager):
         declared_exchange = await self._broker.declare_exchange(self._exchange)
 
         # Declare Dead Letter Exchange
-        dlx = RabbitExchange(name="events.dlx", type="topic", durable=True)
+        dlx = RabbitExchange(name="events.dlx", type=ExchangeType.TOPIC, durable=True)
         declared_dlx = await self._broker.declare_exchange(dlx)
         logger.debug("Dead Letter Exchange declared", exchange=dlx.name)
 

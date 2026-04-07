@@ -28,7 +28,7 @@ def generate_idempotency_key(
         SHA256 hash as hex string
 
     """
-    key_data = f"{event_type}:{booking_id or 'none'}:{json.dumps(data, sort_keys=True)}"
+    key_data = f"{event_type}:{booking_id or 'none'}:{json.dumps(data, sort_keys=True, default=str)}"
     return hashlib.sha256(key_data.encode()).hexdigest()
 
 

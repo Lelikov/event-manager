@@ -421,7 +421,7 @@ requires-dist = [
     { name = "cloudevents", specifier = ">=1.12.0" },
     { name = "cryptography", specifier = ">=44.0.0" },
     { name = "dishka", specifier = ">=1.8.0" },
-    { name = "event-schemas", git = "https://github.com/Lelikov/event-schemas.git" },
+    { name = "event-schemas", directory = "../event-schemas" },
     { name = "fastapi", specifier = ">=0.133.1" },
     { name = "faststream", extras = ["rabbit"], specifier = ">=0.6.6" },
     { name = "pydantic-settings", specifier = ">=2.13.1" },
@@ -441,11 +441,19 @@ dev = [
 
 [[package]]
 name = "event-schemas"
-version = "0.1.0"
-source = { git = "https://github.com/Lelikov/event-schemas.git#be0932754eb858c5ae5318bdc3f936a128be1cd6" }
+version = "0.1.1"
+source = { directory = "../event-schemas" }
 dependencies = [
     { name = "pydantic", extra = ["email"] },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0" },
+    { name = "pydantic", extras = ["email"], specifier = ">=2.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "fast-depends"
