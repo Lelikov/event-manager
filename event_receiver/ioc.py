@@ -1,17 +1,19 @@
 import hashlib
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 
 import structlog
 from dishka import Provider, Scope, provide
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, fastapi
+from httpx import AsyncClient
 
-from event_receiver.adapters import CloudEventPublisher, RabbitTopologyManager
+from event_receiver.adapters import CloudEventPublisher, RabbitTopologyManager, UserResolver
 from event_receiver.config import Settings
 from event_receiver.controllers import IngestController
 from event_receiver.interfaces.ingest import IIngestController
 from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
 from event_receiver.interfaces.routing import IEventRouter
 from event_receiver.interfaces.security import IAuthorizationJWTVerifier
+from event_receiver.interfaces.users import IUserResolver
 from event_receiver.routing import EventRouter
 from event_receiver.security import AuthorizationJWTConfig, AuthorizationJWTVerifier
 from event_receiver.utils import decode_getstream_user_id
@@ -87,11 +89,22 @@ class AppProvider(Provider):
         return decoder
 
     @provide(scope=Scope.APP)
+    async def provide_http_client(self, settings: Settings) -> AsyncGenerator[AsyncClient]:
+        async with AsyncClient(base_url=settings.event_users_api_url, timeout=10.0) as client:
+            yield client
+
+    @provide(scope=Scope.APP)
+    def provide_user_resolver(self, http_client: AsyncClient, settings: Settings) -> IUserResolver:
+        logger.info("Providing UserResolver", event_users_url=settings.event_users_api_url)
+        return UserResolver(http_client=http_client, api_token=settings.event_users_api_token)
+
+    @provide(scope=Scope.APP)
     def provide_publisher(
         self,
         broker: RabbitBroker,
         exchange: RabbitExchange,
         event_router: IEventRouter,
+        user_resolver: IUserResolver,
         getstream_decoder: Callable,
     ) -> ICloudEventPublisher:
         logger.info("Providing CloudEventPublisher")
@@ -99,6 +112,7 @@ class AppProvider(Provider):
             broker=broker,
             exchange=exchange,
             router_by_event=event_router,
+            user_resolver=user_resolver,
             getstream_decoder=getstream_decoder,
         )
 

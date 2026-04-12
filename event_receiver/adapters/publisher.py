@@ -6,6 +6,7 @@ from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPr
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
 
 from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
+from event_receiver.interfaces.users import IUserResolver
 from event_receiver.normalizers import normalize_event_payload
 from event_receiver.utils import generate_idempotency_key, generate_span_id, generate_trace_id
 
@@ -24,11 +25,13 @@ class CloudEventPublisher(ICloudEventPublisher):
         broker: RabbitBroker,
         exchange: RabbitExchange,
         router_by_event: IEventRouter,
+        user_resolver: IUserResolver,
         getstream_decoder: callable[[str], str] | None = None,
     ) -> None:
         self._broker = broker
         self._exchange = exchange
         self._router_by_event = router_by_event
+        self._user_resolver = user_resolver
         self._getstream_decoder = getstream_decoder
 
     async def publish(
@@ -78,6 +81,13 @@ class CloudEventPublisher(ICloudEventPublisher):
             data,
             getstream_decoder=self._getstream_decoder,
         )
+
+        # Enrich each participant with their user_id from event-users
+        for participant in normalized_data["normalized"]["participants"]:
+            participant["user_id"] = await self._user_resolver.resolve_or_create(
+                email=participant["email"],
+                role=participant["role"],
+            )
 
         # Build CloudEvent attributes with extensions
         attributes = {

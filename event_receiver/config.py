@@ -114,6 +114,9 @@ class Settings(BaseSettings):
 
     booking_api_key: str = Field(strict=True)
 
+    event_users_api_url: str = Field(strict=True)
+    event_users_api_token: str = Field(strict=True)
+
     @property
     def routing_destinations(self) -> set[str]:
         destinations = {self.default_rabbit_destination}

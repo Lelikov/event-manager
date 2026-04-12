@@ -1,1 +1,2 @@
 from event_receiver.adapters.publisher import CloudEventPublisher, RabbitTopologyManager
+from event_receiver.adapters.users_client import UserResolver
