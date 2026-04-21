@@ -17,15 +17,17 @@
 
 ## booking.created
 
-| Поле             | Тип        |
-|------------------|------------|
-| booking_uid      | `str`      |
-| user.email       | `str`      |
-| user.time_zone   | `str`      |
-| client.email     | `str`      |
-| client.time_zone | `str`      |
-| start_time       | `datetime` |
-| end_time         | `datetime` |
+| Поле             | Тип              |
+|------------------|------------------|
+| booking_uid      | `str`            |
+| users            | `list[UserInfo]` |
+| start_time       | `datetime`       |
+| end_time         | `datetime`       |
+
+`UserInfo`: `{ email: str, role: "organizer" | "client" }`
+
+Входящий payload содержит `users` — список с ролями `organizer` и `client`.
+`IngestController._transform_booking_created_payload()` трансформирует в `user`/`client` структуру для валидации через `BookingCreatedPayload`.
 
 ## booking.rescheduled
 

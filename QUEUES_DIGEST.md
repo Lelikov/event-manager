@@ -6,12 +6,14 @@
 
 | Queue | Source Pattern | Type Pattern | Events |
 |---|---|---|---|
-| `events.booking.lifecycle` | `*` | `booking.created` / `booking.rescheduled` / `booking.reassigned` / `booking.cancelled` | lifecycle бронирования |
-| `events.booking.reminder` | `*` | `booking.reminder_sent` | отправка напоминаний |
-| `events.chat.lifecycle` | `*` | `chat.created` / `chat.deleted` | lifecycle чата |
-| `events.chat.activity` | `*` | `chat.message_sent` | активность в чате |
-| `events.meeting.lifecycle` | `*` | `meeting.url_created` / `meeting.url_deleted` | lifecycle meeting URL |
+| `events.booking.lifecycle` | `booking` | `booking.created` / `booking.rescheduled` / `booking.reassigned` / `booking.cancelled` | lifecycle бронирования |
+| `events.booking.reminder` | `booking` | `booking.reminder_sent` | отправка напоминаний |
+| `events.chat.lifecycle` | `booking` | `chat.created` / `chat.deleted` | lifecycle чата |
+| `events.chat.activity` | `booking` | `chat.message_sent` | активность в чате |
+| `events.meeting.lifecycle` | `booking` | `meeting.url_created` / `meeting.url_deleted` | lifecycle meeting URL |
 | `events.notification.delivery` | `*` | `notification.email.message_sent` / `notification.telegram.message_sent` | отправка уведомлений |
+| `events.notification.delivery` | `*` | `notification.push.message_sent` | результат отправки push |
+| `events.notification.commands` | `*` | `notification.send_requested` | команды для event-notifier |
 | `events.jitsi` | `jitsi*` | `*` | все Jitsi-события |
 | `events.mail` | `unisender-go` | `unisender.*` | события UniSender |
 | `events.chat` | `getstream` | `getstream.*` | события GetStream |
@@ -189,3 +191,11 @@ Fallback-очередь по умолчанию:
 Для всех событий выше действует правило:
 - `booking_uid` переносится в header `ce-booking_id`;
 - в `body` остаются остальные поля из списка соответствующего события.
+
+## events.notification.commands
+
+Очередь команд для event-notifier сервиса:
+- `notification.send_requested` — запрос на отправку уведомлений по всем каналам
+
+**Консьюмер:** `event-notifier` (ещё не задеплоен)
+**Source pattern:** `*` (любой сервис может отправить команду)

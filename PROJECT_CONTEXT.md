@@ -1,7 +1,7 @@
-# Project Context: event-manager
+# Project Context: event-receiver
 
 ## Overview
-`event-manager` — ingress-микросервис для приёма входящих событий,
+`event-receiver` — ingress-микросервис для приёма входящих событий,
 валидации авторизации/целостности и публикации нормализованных CloudEvents в RabbitMQ.
 
 Текущая кодовая база реализована в пакете `event_receiver` и построена в стиле
@@ -30,20 +30,28 @@ interface-driven архитектуры:
   - routing resolution и Rabbit publish/topology (`routing.py`, `adapters/publisher.py`).
 
 ## HTTP API
-- `POST /event/cloudevents`
-  - принимает CloudEvent,
-  - ожидает JWT в `Authorization`,
-  - проверяет подпись JWT,
-  - парсит CloudEvent,
-  - сверяет claims (`source`, `type`) с event,
+- `POST /event/booking`
+  - принимает CloudEvent от Booking сервиса,
+  - проверяет API key в `Authorization`,
+  - парсит CloudEvent, извлекает `booking_uid` из payload в CE-атрибут,
+  - публикует нормализованное событие в RabbitMQ.
+
+- `POST /event/jitsi`
+  - принимает CloudEvent от Jitsi,
+  - проверяет JWT подпись и claims (`source`, `type`),
   - публикует событие в RabbitMQ.
 
 - `POST /event/unisender-go`
   - принимает JSON payload UniSender Go,
   - валидирует подпись в поле `auth` (MD5 от payload c подстановкой `email_api_key`),
-  - при успехе публикует нормализованное событие в RabbitMQ.
+  - при успехе публикует нормализованные события в RabbitMQ.
 
-- `GET /event/cloudevents`, `GET /event/unisender-go`
+- `POST /event/getstream`
+  - принимает webhook от GetStream,
+  - проверяет HMAC-подпись в `X-SIGNATURE`,
+  - публикует событие в RabbitMQ.
+
+- `GET /event/*`
   - lightweight endpoint-health ответ `{"status": "ok"}`.
 
 - `GET /health`
@@ -72,7 +80,6 @@ interface-driven архитектуры:
   - `security.py` — JWT verifier,
   - `errors.py` — доменные ошибки ingest-конвейера,
   - `logger.py` — конфигурация structlog,
-  - `schemas.py` — placeholder под будущие DTO.
 
 ## DI / IoC (Dishka)
 `event_receiver/ioc.py` (`AppProvider`) регистрирует:
@@ -83,7 +90,7 @@ interface-driven архитектуры:
   - `IAuthorizationJWTVerifier` -> `AuthorizationJWTVerifier`
   - `ICloudEventPublisher` -> `CloudEventPublisher`
   - `ITopologyManager` -> `RabbitTopologyManager`
-- **Scope.REQUEST**
+- **Scope.APP** (also)
   - `IIngestController` -> `IngestController`
 
 ## Error Handling Contract
