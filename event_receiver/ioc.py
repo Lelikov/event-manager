@@ -77,7 +77,7 @@ class AppProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
-    def provide_getstream_decoder(self, settings: Settings) -> Callable:
+    def provide_getstream_decoder(self, settings: Settings) -> Callable[[str], str]:
         """Provide a callable that decodes GetStream encrypted user IDs."""
         # Hash the encryption key to get 32 bytes for AES-256
         key = hashlib.sha256(settings.getstream_user_id_encryption_key.encode()).digest()
@@ -105,7 +105,7 @@ class AppProvider(Provider):
         exchange: RabbitExchange,
         event_router: IEventRouter,
         user_resolver: IUserResolver,
-        getstream_decoder: Callable,
+        getstream_decoder: Callable[[str], str],
     ) -> ICloudEventPublisher:
         logger.info("Providing CloudEventPublisher")
         return CloudEventPublisher(
@@ -130,14 +130,14 @@ class AppProvider(Provider):
             topology_queues=settings.topology_queues,
         )
 
-    @provide(scope=Scope.REQUEST)
+    @provide(scope=Scope.APP)
     def provide_ingest_controller(
         self,
         settings: Settings,
         publisher: ICloudEventPublisher,
         authorization_jwt_verifier: IAuthorizationJWTVerifier,
     ) -> IIngestController:
-        logger.debug("Providing IngestController for request scope")
+        logger.debug("Providing IngestController")
         return IngestController(
             settings=settings,
             publisher=publisher,

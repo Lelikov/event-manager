@@ -12,6 +12,8 @@ from event_receiver.utils import generate_idempotency_key, generate_span_id, gen
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from event_receiver.interfaces.routing import IEventRouter
 
 
@@ -26,7 +28,7 @@ class CloudEventPublisher(ICloudEventPublisher):
         exchange: RabbitExchange,
         router_by_event: IEventRouter,
         user_resolver: IUserResolver,
-        getstream_decoder: callable[[str], str] | None = None,
+        getstream_decoder: Callable[[str], str] | None = None,
     ) -> None:
         self._broker = broker
         self._exchange = exchange
