@@ -7,6 +7,7 @@ that event-saver can easily consume without complex extraction logic.
 import binascii
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from event_schemas import (
     BookingCreatedPayload,
     BookingReassignedPayload,
@@ -21,6 +22,8 @@ from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+logger = structlog.get_logger(__name__)
 
 
 def normalize_event_payload(
@@ -44,7 +47,8 @@ def normalize_event_payload(
     """
     try:
         participants = _extract_participants(event_type, payload, getstream_decoder=getstream_decoder)
-    except ValidationError, KeyError, ValueError:
+    except (ValidationError, KeyError, ValueError) as e:
+        logger.warning("Normalizer error", event_type=event_type, error=repr(e))
         participants = []
 
     return {"original": payload, "normalized": {"participants": participants}}
@@ -75,11 +79,28 @@ def _extract_participants(
             | EventType.GETSTREAM_MESSAGE_UPDATED
             | EventType.GETSTREAM_MESSAGE_DELETED
             | EventType.GETSTREAM_MESSAGE_READ
-            | EventType.GETSTREAM_CHANEL_CREATED
-            | EventType.GETSTREAM_CHANEL_DELETED
+            | EventType.GETSTREAM_CHANNEL_CREATED
+            | EventType.GETSTREAM_CHANNEL_DELETED
         ):
             return _participants_from_getstream_event(payload, getstream_decoder=getstream_decoder)
-        case EventType.JITSI_ROOM_CREATED | EventType.JITSI_PARTICIPANT_JOINED | EventType.JITSI_PARTICIPANT_LEFT:
+        case (
+            EventType.JITSI_CONFERENCE_JOINED
+            | EventType.JITSI_CONFERENCE_LEFT
+            | EventType.JITSI_PARTICIPANT_JOINED
+            | EventType.JITSI_PARTICIPANT_LEFT
+            | EventType.JITSI_PARTICIPANT_MUTED
+            | EventType.JITSI_PARTICIPANT_MENU_BUTTON_CLICK
+            | EventType.JITSI_AUDIO_MUTE_STATUS_CHANGED
+            | EventType.JITSI_VIDEO_MUTE_STATUS_CHANGED
+            | EventType.JITSI_SPEAKER_DOMINANT_CHANGED
+            | EventType.JITSI_DEVICE_LIST_CHANGED
+            | EventType.JITSI_CAMERA_ERROR
+            | EventType.JITSI_MIC_ERROR
+            | EventType.JITSI_ERROR_OCCURRED
+            | EventType.JITSI_PEER_CONNECTION_FAILURE
+            | EventType.JITSI_SUSPEND_DETECTED
+            | EventType.JITSI_TOOLBAR_BUTTON_CLICKED
+        ):
             return _participants_from_jitsi_event(payload)
         case _:
             return []

@@ -40,7 +40,7 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
             body = await request.body()
             try:
                 body_data = json.loads(body)
-            except (json.JSONDecodeError, ValueError):
+            except json.JSONDecodeError, ValueError:
                 body_data = body.decode(errors="replace")
 
             record = {
