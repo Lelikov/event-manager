@@ -1,4 +1,6 @@
+import asyncio
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 from logging import getLevelNamesMapping
@@ -38,7 +40,7 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
             body = await request.body()
             try:
                 body_data = json.loads(body)
-            except json.JSONDecodeError, ValueError:
+            except (json.JSONDecodeError, ValueError):
                 body_data = body.decode(errors="replace")
 
             record = {
@@ -53,12 +55,14 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-container = make_async_container(AppProvider(), FastapiProvider())
 logger = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
+    container = make_async_container(AppProvider(), FastapiProvider())
+    setup_dishka(container=container, app=application)
+
     settings = await container.get(Settings)
     log_level = getLevelNamesMapping().get(settings.log_level)
     setup_logger(log_level=log_level, console_render=settings.debug)
@@ -71,7 +75,19 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     )
 
     broker = await container.get(RabbitBroker)
-    await broker.connect()
+    last_exc: BaseException | None = None
+    for attempt in range(1, 4):
+        try:
+            await broker.connect()
+            last_exc = None
+            break
+        except (TimeoutError, OSError) as exc:
+            last_exc = exc
+            logger.warning("RabbitMQ connect failed, retrying", attempt=attempt, error=str(exc))
+            if attempt < 3:
+                await asyncio.sleep(2)
+    if last_exc is not None:
+        raise last_exc
     logger.info("Connected to RabbitMQ broker")
 
     topology_manager = await container.get(ITopologyManager)
@@ -86,15 +102,15 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     logger.info("Event receiver application shutdown complete")
 
 
-app = FastAPI(title="event-manager", version="0.1.0", lifespan=lifespan)
-setup_dishka(container=container, app=app)
+app = FastAPI(title="event-receiver", version="0.1.0", lifespan=lifespan)
 app.include_router(root_router)
 
-app.add_middleware(RequestLoggerMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if os.getenv("DEBUG", "").lower() in ("1", "true", "yes"):
+    app.add_middleware(RequestLoggerMiddleware)
