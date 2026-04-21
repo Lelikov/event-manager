@@ -1,19 +1,33 @@
 from http import HTTPStatus
 
+import httpx
 import structlog
-from httpx import AsyncClient
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from event_receiver.interfaces.users import IUserResolver
 
 
 logger = structlog.get_logger(__name__)
 
+_RETRY_DECORATOR = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+    retry=retry_if_exception_type((httpx.TimeoutException, httpx.HTTPStatusError)),
+    before_sleep=lambda retry_state: logger.warning(
+        "Retrying event-users call",
+        attempt=retry_state.attempt_number,
+        error=repr(retry_state.outcome.exception()),
+    ),
+    reraise=True,
+)
+
 
 class UserResolver(IUserResolver):
-    def __init__(self, *, http_client: AsyncClient, api_token: str) -> None:
+    def __init__(self, *, http_client: httpx.AsyncClient, api_token: str) -> None:
         self._client = http_client
         self._headers = {"Authorization": f"Bearer {api_token}"}
 
+    @_RETRY_DECORATOR
     async def resolve_or_create(self, *, email: str, role: str) -> str:
         user_id = await self._get_user(email=email, role=role)
         if user_id:
@@ -37,7 +51,6 @@ class UserResolver(IUserResolver):
             headers=self._headers,
         )
         if response.status_code == HTTPStatus.CONFLICT:
-            # Race condition: another process created the user between our GET and POST
             logger.debug("User conflict on create, retrying GET", email=email, role=role)
             user_id = await self._get_user(email=email, role=role)
             if user_id is None:
