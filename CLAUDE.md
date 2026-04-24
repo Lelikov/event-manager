@@ -177,6 +177,24 @@ Structured logging via `structlog` (`event_receiver/logger.py`):
 - `QUEUES_DIGEST.md` - RabbitMQ routing rules and queue mappings
 - `pyproject.toml` - Dependencies and tool configuration
 
+## Service Documentation
+
+- `docs/SERVICE_OVERVIEW.md` — architecture, maturity, known issues
+- `docs/API_CONTRACTS.md` — HTTP endpoints, request/response schemas
+- `docs/DEPENDENCIES.md` — external service dependencies and failure modes
+- `docs/AUDIT.md` — audit findings for this service
+
+Cross-service architecture docs (message contracts, system topology, onboarding) are in `../docs/`.
+
+## Documentation Requirements
+
+All code changes MUST include corresponding documentation updates:
+- New/changed endpoints → update `docs/API_CONTRACTS.md` and `PROJECT_CONTEXT.md`
+- New/changed event types or routing rules → update `QUEUES_DIGEST.md` and `EVENTS_DIGEST.md`
+- New/changed dependencies or external service calls → update `docs/DEPENDENCIES.md`
+- Architectural changes (DI, interfaces, adapters) → update `PROJECT_CONTEXT.md` and `docs/SERVICE_OVERVIEW.md`
+- Bug fixes for audit findings → update `docs/AUDIT.md`
+
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
 

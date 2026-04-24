@@ -101,6 +101,7 @@ class AppProvider(Provider):
     @provide(scope=Scope.APP)
     def provide_publisher(
         self,
+        settings: Settings,
         broker: RabbitBroker,
         exchange: RabbitExchange,
         event_router: IEventRouter,
@@ -114,6 +115,7 @@ class AppProvider(Provider):
             router_by_event=event_router,
             user_resolver=user_resolver,
             getstream_decoder=getstream_decoder,
+            debug=settings.debug,
         )
 
     @provide(scope=Scope.APP)

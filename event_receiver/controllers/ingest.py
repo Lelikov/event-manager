@@ -1,6 +1,8 @@
 import hashlib
 import hmac
 import re
+import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -44,7 +46,10 @@ class IngestController(IIngestController):
         trace_id = extract_trace_id_from_headers(dict(headers))
 
         logger.info("Started Jitsi ingest", body=body, trace_id=trace_id)
-        self._authorization_jwt_verifier.verify_signature(token=headers.get("Authorization"))
+        token = headers.get("Authorization")
+        if not token:
+            raise UnauthorizedError("Missing Authorization header")
+        decoded_claims = self._authorization_jwt_verifier.verify_signature(token=token)
         logger.debug("JWT signature verification succeeded for Jitsi ingest")
 
         try:
@@ -62,7 +67,7 @@ class IngestController(IIngestController):
         )
 
         claims = self._authorization_jwt_verifier.verify(
-            token=headers.get("Authorization"),
+            claims=decoded_claims,
             event_source=incoming.source,
             event_type=incoming.type,
         )
@@ -108,12 +113,13 @@ class IngestController(IIngestController):
             trace_id=trace_id,
         )
 
-        booking_uid = incoming.data.pop("booking_uid", None)
+        data = dict(incoming.data)
+        booking_uid = data.pop("booking_uid", None)
         if not booking_uid:
             raise BadRequestError("Missing booking_uid in payload")
 
         if incoming.type == EventType.BOOKING_CREATED:
-            payload_dict = self._transform_booking_created_payload(incoming.data)
+            payload_dict = self._transform_booking_created_payload(data)
             try:
                 BookingCreatedPayload(**payload_dict)
             except ValidationError as exc:
@@ -124,7 +130,7 @@ class IngestController(IIngestController):
                 )
                 raise BadRequestError(f"Invalid booking payload schema: {exc}") from exc
         else:
-            payload_dict = incoming.data
+            payload_dict = data
 
         await self._publisher.publish(
             source=incoming.source,
@@ -152,12 +158,17 @@ class IngestController(IIngestController):
         client = next((u for u in users if u.get("role") == "client"), None)
         if not organizer or not client:
             raise BadRequestError("booking.created requires organizer and client in users")
-        return {
+        result: dict[str, Any] = {
             "user": {"email": organizer["email"]},
             "client": {"email": client["email"]},
             "start_time": data["start_time"],
             "end_time": data["end_time"],
         }
+        if data.get("volunteer_id"):
+            result["volunteer_id"] = data["volunteer_id"]
+        if data.get("client_id"):
+            result["client_id"] = data["client_id"]
+        return result
 
     async def ingest_unisender_go(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
@@ -183,12 +194,18 @@ class IngestController(IIngestController):
 
         for event_by_user in ujson.loads(body).get("events_by_user", []):
             for event in event_by_user.get("events", []):
-                booking_uid = event.get("event_data", {}).get("metadata", {}).pop("booking_uid")
+                event_data = dict(event.get("event_data", {}))
+                metadata = dict(event_data.get("metadata", {}))
+                booking_uid = metadata.pop("booking_uid", None)
+                event_data["metadata"] = metadata
+                event_copy = {**event, "event_data": event_data}
                 await self._publisher.publish(
                     source="unisender-go",
                     event_type=EventType.UNISENDER_STATUS_CREATED,
+                    event_id=str(uuid.uuid4()),
+                    event_time=datetime.now(UTC).isoformat(),
                     booking_id=booking_uid,
-                    data=event,
+                    data=event_copy,
                     trace_id=trace_id,
                 )
         logger.info("UniSender Go ingest completed", trace_id=trace_id)
@@ -198,7 +215,10 @@ class IngestController(IIngestController):
 
         logger.info("Started Getstream ingest", trace_id=trace_id)
         client = StreamChat(api_key=self._settings.getstream_api_key, api_secret=self._settings.getstream_api_secret)
-        if not client.verify_webhook(body, headers["X-SIGNATURE"]):
+        signature = headers.get("X-SIGNATURE")
+        if signature is None:
+            raise UnauthorizedError("Missing X-SIGNATURE header")
+        if not client.verify_webhook(body, signature):
             logger.warning("Getstream webhook failed: invalid signature")
             raise UnauthorizedError("Invalid Getstream webhook signature")
         data = ujson.loads(body)

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import anyio
 import structlog
 from dishka import make_async_container
-from dishka.integrations.fastapi import FastapiProvider, setup_dishka
+from dishka.integrations.fastapi import ContainerMiddleware, FastapiProvider
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from faststream.rabbit import RabbitBroker
@@ -61,7 +61,7 @@ logger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
     container = make_async_container(AppProvider(), FastapiProvider())
-    setup_dishka(container=container, app=application)
+    application.state.dishka_container = container
 
     settings = await container.get(Settings)
     log_level = getLevelNamesMapping().get(settings.log_level)
@@ -104,6 +104,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
 
 app = FastAPI(title="event-receiver", version="0.1.0", lifespan=lifespan)
 app.include_router(root_router)
+
+app.add_middleware(ContainerMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

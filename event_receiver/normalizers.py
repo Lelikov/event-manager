@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from event_schemas import (
     BookingCreatedPayload,
-    BookingReassignedPayload,
     BookingReminderSentPayload,
     GetStreamEventPayload,
     JitsiEventPayload,
@@ -62,10 +61,10 @@ def _extract_participants(
 ) -> list[dict[str, Any]]:
     """Extract participants from payload based on event type."""
     match event_type:
-        case EventType.BOOKING_CREATED | EventType.BOOKING_CANCELLED:
+        case EventType.BOOKING_CREATED:
             return _participants_from_booking_created(payload)
-        case EventType.BOOKING_REASSIGNED:
-            return _participants_from_booking_reassigned(payload)
+        case EventType.BOOKING_CANCELLED | EventType.BOOKING_REASSIGNED | EventType.BOOKING_RESCHEDULED:
+            return _participants_from_users_list(payload)
         case EventType.BOOKING_REMINDER_SENT:
             return _participants_from_booking_reminder_sent(payload)
         case EventType.MEETING_URL_CREATED | EventType.MEETING_URL_DELETED:
@@ -117,27 +116,19 @@ def _participants_from_users_list(payload: dict[str, Any]) -> list[dict[str, Any
 
 def _participants_from_booking_created(payload: dict[str, Any]) -> list[dict[str, Any]]:
     validated = BookingCreatedPayload(**payload)
-    return [
-        {
-            "email": validated.user.email,
-            "role": "organizer",
-        },
-        {
-            "email": validated.client.email,
-            "role": "client",
-        },
-    ]
-
-
-def _participants_from_booking_reassigned(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    validated = BookingReassignedPayload(**payload)
-    return [
-        {
-            "email": validated.user.email,
-            "role": "organizer",
-            "time_zone": validated.user.time_zone,
-        },
-    ]
+    organizer: dict[str, Any] = {
+        "email": validated.user.email,
+        "role": "organizer",
+    }
+    if validated.volunteer_id:
+        organizer["user_id"] = validated.volunteer_id
+    client: dict[str, Any] = {
+        "email": validated.client.email,
+        "role": "client",
+    }
+    if validated.client_id:
+        client["user_id"] = validated.client_id
+    return [organizer, client]
 
 
 def _participants_from_booking_reminder_sent(payload: dict[str, Any]) -> list[dict[str, Any]]:

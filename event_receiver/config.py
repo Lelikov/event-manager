@@ -57,14 +57,24 @@ def _default_route_rules() -> list[RouteRule]:
             type_pattern="meeting.url_deleted",
         ),
         RouteRule(
+            destination="events.notification.commands",
+            source_pattern="*",
+            type_pattern="notification.send_requested",
+        ),
+        RouteRule(
             destination="events.notification.delivery",
-            source_pattern="booking",
+            source_pattern="*",
             type_pattern="notification.email.message_sent",
         ),
         RouteRule(
             destination="events.notification.delivery",
-            source_pattern="booking",
+            source_pattern="*",
             type_pattern="notification.telegram.message_sent",
+        ),
+        RouteRule(
+            destination="events.notification.delivery",
+            source_pattern="*",
+            type_pattern="notification.push.message_sent",
         ),
         RouteRule(
             destination="events.jitsi",

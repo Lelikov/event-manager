@@ -27,8 +27,15 @@ class UserResolver(IUserResolver):
         self._client = http_client
         self._headers = {"Authorization": f"Bearer {api_token}"}
 
+    async def resolve_or_create(self, *, email: str, role: str) -> str | None:
+        try:
+            return await self._resolve_or_create_with_retry(email=email, role=role)
+        except httpx.HTTPError, RuntimeError:
+            logger.warning("event-users unavailable, publishing without user_id", email=email, role=role)
+            return None
+
     @_RETRY_DECORATOR
-    async def resolve_or_create(self, *, email: str, role: str) -> str:
+    async def _resolve_or_create_with_retry(self, *, email: str, role: str) -> str:
         user_id = await self._get_user(email=email, role=role)
         if user_id:
             return user_id

@@ -1,5 +1,9 @@
+import json
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import anyio
 import structlog
 from cloudevents.http import CloudEvent, to_binary
 from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPriority, EventType
@@ -19,6 +23,8 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+_PUBLISHED_EVENTS_LOG_FILE = Path("published_events.jsonl")
+
 
 class CloudEventPublisher(ICloudEventPublisher):
     def __init__(
@@ -29,12 +35,14 @@ class CloudEventPublisher(ICloudEventPublisher):
         router_by_event: IEventRouter,
         user_resolver: IUserResolver,
         getstream_decoder: Callable[[str], str] | None = None,
+        debug: bool = False,
     ) -> None:
         self._broker = broker
         self._exchange = exchange
         self._router_by_event = router_by_event
         self._user_resolver = user_resolver
         self._getstream_decoder = getstream_decoder
+        self._debug = debug
 
     async def publish(
         self,
@@ -84,12 +92,15 @@ class CloudEventPublisher(ICloudEventPublisher):
             getstream_decoder=self._getstream_decoder,
         )
 
-        # Enrich each participant with their user_id from event-users
+        # Enrich each participant with their user_id from event-users (skip if already resolved)
         for participant in normalized_data["normalized"]["participants"]:
-            participant["user_id"] = await self._user_resolver.resolve_or_create(
-                email=participant["email"],
-                role=participant["role"],
-            )
+            if not participant.get("user_id"):
+                user_id = await self._user_resolver.resolve_or_create(
+                    email=participant["email"],
+                    role=participant["role"],
+                )
+                if user_id:
+                    participant["user_id"] = user_id
 
         # Build CloudEvent attributes with extensions
         attributes = {
@@ -123,6 +134,22 @@ class CloudEventPublisher(ICloudEventPublisher):
             message_type=event_type_str,
             priority=priority.value,  # RabbitMQ priority
         )
+        if self._debug:
+            record = {
+                "ts": time.time(),
+                "source": source,
+                "event_type": event_type_str,
+                "routing_key": routing_key,
+                "exchange": self._exchange.name,
+                "trace_id": trace_id,
+                "idempotency_key": idempotency_key,
+                "booking_id": booking_id,
+                "priority": priority.value,
+                "data": normalized_data,
+            }
+            async with await anyio.open_file(_PUBLISHED_EVENTS_LOG_FILE, "a") as f:
+                await f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
         logger.info(
             "Published CloudEvent to RabbitMQ",
             source=source,

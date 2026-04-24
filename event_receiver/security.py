@@ -49,7 +49,8 @@ class AuthorizationJWTVerifier(IAuthorizationJWTVerifier):
     def verify(
         self,
         *,
-        token: str,
+        token: str | None = None,
+        claims: dict[str, Any] | None = None,
         event_source: str,
         event_type: str,
     ) -> dict[str, Any]:
@@ -58,17 +59,20 @@ class AuthorizationJWTVerifier(IAuthorizationJWTVerifier):
             event_source=event_source,
             event_type=event_type,
         )
-        claims: dict[str, Any] = jwt.decode(
-            token,
-            options={
-                "verify_signature": False,
-                "verify_exp": True,
-                "verify_iat": True,
-                "verify_nbf": True,
-                "verify_aud": False,
-                "verify_iss": False,
-            },
-        )
+        if claims is None:
+            if token is None:
+                raise UnauthorizedError("Missing authorization token")
+            claims = jwt.decode(
+                token,
+                options={
+                    "verify_signature": False,
+                    "verify_exp": True,
+                    "verify_iat": True,
+                    "verify_nbf": True,
+                    "verify_aud": False,
+                    "verify_iss": False,
+                },
+            )
 
         source = claims.get("source")
         _type = claims.get("type")
@@ -78,14 +82,14 @@ class AuthorizationJWTVerifier(IAuthorizationJWTVerifier):
                 claim_source=source,
                 event_source=event_source,
             )
-            raise ValueError("JWT source claim does not match request source")
+            raise UnauthorizedError("JWT source claim does not match request source")
         if _type and _type != event_type:
             logger.warning(
                 "JWT type claim mismatch",
                 claim_type=_type,
                 event_type=event_type,
             )
-            raise ValueError("JWT type claim does not match request type")
+            raise UnauthorizedError("JWT type claim does not match request type")
 
         excluded_fields = {"source", "type", "exp", "iat", "nbf", "aud", "iss", "sub"}
 

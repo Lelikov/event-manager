@@ -18,6 +18,27 @@ class TestBookingCreatedNormalizer:
         result = normalize_event_payload(EventType.BOOKING_CREATED, payload)
         participants = result["normalized"]["participants"]
         assert len(participants) == 2
+        assert {
+            "email": "org@test.com",
+            "role": "organizer",
+            "user_id": "550e8400-e29b-41d4-a716-446655440001",
+        } in participants
+        assert {
+            "email": "cli@test.com",
+            "role": "client",
+            "user_id": "550e8400-e29b-41d4-a716-446655440002",
+        } in participants
+
+    def test_extracts_without_user_ids(self) -> None:
+        payload = {
+            "user": {"email": "org@test.com"},
+            "client": {"email": "cli@test.com"},
+            "start_time": "2026-01-01T10:00:00Z",
+            "end_time": "2026-01-01T11:00:00Z",
+        }
+        result = normalize_event_payload(EventType.BOOKING_CREATED, payload)
+        participants = result["normalized"]["participants"]
+        assert len(participants) == 2
         assert {"email": "org@test.com", "role": "organizer"} in participants
         assert {"email": "cli@test.com", "role": "client"} in participants
 
@@ -35,18 +56,19 @@ class TestBookingCreatedNormalizer:
 
 
 class TestBookingReassignedNormalizer:
-    def test_extracts_new_organizer(self) -> None:
+    def test_extracts_participants_from_users_list(self) -> None:
         payload = {
-            "volunteer_id": "550e8400-e29b-41d4-a716-446655440003",
-            "client_id": "550e8400-e29b-41d4-a716-446655440002",
-            "user": {"email": "new@org.com", "time_zone": "Europe/Moscow"},
-            "previous_organizer": {"email": "old@org.com"},
+            "users": [
+                {"email": "", "role": "previous_organizer"},
+                {"email": "new@org.com", "role": "organizer"},
+                {"email": "client@test.com", "role": "client"},
+            ],
         }
         result = normalize_event_payload(EventType.BOOKING_REASSIGNED, payload)
         participants = result["normalized"]["participants"]
-        assert len(participants) == 1
-        assert participants[0]["email"] == "new@org.com"
-        assert participants[0]["role"] == "organizer"
+        assert len(participants) == 2
+        assert {"email": "new@org.com", "role": "organizer"} in participants
+        assert {"email": "client@test.com", "role": "client"} in participants
 
 
 class TestBookingReminderSentNormalizer:
