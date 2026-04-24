@@ -25,15 +25,16 @@
 | Base URL | `Settings.event_users_api_url` |
 | Authentication | Bearer token via `Settings.event_users_api_token` |
 | Timeout | 10 seconds per request (`ioc.py:93`) |
+| Retry policy | `tenacity` retry with exponential backoff, up to 3 attempts on `httpx.HTTPStatusError` or `httpx.TimeoutException` |
 | Endpoints called | `GET /api/users/roles/{role}/emails/{email}` (lookup), `POST /api/users` (create) |
 | Call frequency | Once per participant per event (can be 1-2 calls per event typically) |
 | Source | `adapters/users_client.py:17-49` |
 
 **If event-users is unavailable**:
-- HTTP timeout (10s) or 5xx propagates as unhandled exception from the publish path
-- Webhook caller receives HTTP 500
-- Event is NOT published to RabbitMQ (user resolution happens before publish)
-- No retry, circuit-breaker, or fallback (audit finding HIGH)
+- Calls are retried up to 3 times with exponential backoff
+- After retries are exhausted, `UserResolver` falls back gracefully to `user_id=None`
+- Event is still published to RabbitMQ; participant entries will have `user_id=null`
+- Webhook caller receives `202 Accepted` (event-users failure is no longer in the critical path)
 
 ---
 
@@ -132,7 +133,7 @@ graph LR
 4. **event-saver starves**: No new events to consume; DB state becomes stale
 5. **event-admin shows stale data**: Read-only API reflects outdated state
 6. **Booking lifecycle gaps**: Critical events (booking.created, booking.cancelled) are delayed until recovery
-7. **User resolution calls stop**: event-users sees reduced traffic (no new resolve_or_create calls)
+7. **User resolution calls stop**: event-users sees reduced traffic; events that do arrive will publish with `user_id=null` if event-users is also down
 
 ### Recovery Behavior
 
@@ -147,5 +148,5 @@ graph LR
 |---|---|---|
 | event-receiver down | All event ingestion stops | Run multiple replicas behind load balancer |
 | RabbitMQ down | Publish fails, 500 to callers | RabbitMQ clustering; no local buffer in event-receiver |
-| event-users down | All publishes fail (user resolution in critical path) | None currently; consider making enrichment optional |
-| event-users slow | Webhook response latency increases by up to 10s per participant | Consider async enrichment or timeout reduction |
+| event-users down | Events published with `user_id=null` after 3 retry attempts | Retry with exponential backoff + graceful fallback to `user_id=None` |
+| event-users slow | Webhook response latency increases (up to 3×10s in worst case per participant) | Consider async enrichment or timeout reduction |

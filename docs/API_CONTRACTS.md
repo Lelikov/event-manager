@@ -16,7 +16,7 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 - Content-Type: CloudEvents binary format (headers + JSON body)
 - Required CloudEvent headers: `ce-type`, `ce-source`, `ce-id`, `ce-time`, `ce-specversion`
 - Body (JSON):
-  - `booking_uid` (str, **required**): Booking identifier, extracted via `.pop()` before publish
+  - `booking_uid` (str, **required**): Booking identifier, extracted from a copy of the payload before publish
   - For `booking.created` type, body must contain:
     - `users` (list): Array of `{role: "organizer"|"client", email: str}` objects
     - `start_time` (str): Booking start time
@@ -39,8 +39,8 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 **Source**: `routes.py:15-19`, controller: `controllers/ingest.py:43-86`
 
 **Authentication**: JWT in `Authorization` header. Two-phase verification:
-1. Full signature verification via `AuthorizationJWTVerifier.verify_signature()` (algorithm, issuer, audience validated) -- `security.py:29-42`
-2. Claims verification via `AuthorizationJWTVerifier.verify()` (checks `source` and `type` claims match the CloudEvent fields) -- `security.py:49-94`
+1. Full signature verification via `AuthorizationJWTVerifier.verify_signature()` (algorithm, issuer, audience validated) — returns parsed claims — `security.py:29-42`
+2. Claims verification via `AuthorizationJWTVerifier.verify()` (checks `source` and `type` claims match the CloudEvent fields; receives pre-parsed claims, no second decode) — `security.py:49-94`
 
 **Request**:
 - Content-Type: CloudEvents binary format (headers + JSON body)
@@ -83,7 +83,7 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 - `401 Unauthorized`: Invalid signature
 - `500 Internal Server Error`: Configuration error (invalid API key setup) or unexpected error
 
-**Note**: Publishes one CloudEvent per event in the `events_by_user[].events[]` array. Each event is published without `event_id` or `event_time` (see audit finding MEDIUM).
+**Note**: Publishes one CloudEvent per event in the `events_by_user[].events[]` array. Each event is published with a generated `event_id` (UUID) and `event_time` (current UTC timestamp).
 
 ---
 
@@ -91,11 +91,11 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 
 **Source**: `routes.py:15-19`, controller: `controllers/ingest.py:196-215`
 
-**Authentication**: GetStream webhook signature in `X-SIGNATURE` header. Verified via `StreamChat.verify_webhook(body, signature)` using `Settings.getstream_api_key` and `Settings.getstream_api_secret` -- `controllers/ingest.py:200-206`.
+**Authentication**: GetStream webhook signature in `X-SIGNATURE` header. Absence of the header raises `UnauthorizedError` (HTTP 401) before any further processing. Signature verified via `StreamChat.verify_webhook(body, signature)` using `Settings.getstream_api_key` and `Settings.getstream_api_secret` -- `controllers/ingest.py:200-206`.
 
 **Request**:
 - Content-Type: `application/json`
-- Required HTTP headers: `X-SIGNATURE` (GetStream webhook signature)
+- Required HTTP headers: `X-SIGNATURE` (GetStream webhook signature; missing header returns 401)
 - Body (JSON): GetStream webhook payload
   - `type` (str): GetStream event type (used as suffix in CloudEvent type: `getstream.{type}`)
   - `channel_id` (str, optional): Used as `booking_id`
@@ -145,7 +145,7 @@ Every published message includes these CloudEvent attributes as AMQP headers (`a
 | `source` | Source identifier | e.g., `booking`, `jitsi`, `unisender-go`, `getstream` |
 | `id` | From incoming event or auto-generated | CloudEvent ID |
 | `time` | From incoming event (if provided) | ISO 8601 timestamp |
-| `booking_id` | Extracted per endpoint | Booking UID (CE extension) |
+| `booking_id` | Extracted per endpoint (if present) | Booking UID (CE extension); only set when a booking_id is available for the event |
 | `traceid` | From request headers or generated UUID | Distributed trace ID |
 | `spanid` | Generated UUID | Span ID for this publish operation |
 | `idempotencykey` | SHA256 of type+booking_id+data | Deterministic dedup key |

@@ -8,30 +8,30 @@ Audited: 2026-04-19
 
 ---
 
-### [CRITICAL] Booking lifecycle events routed to phantom queue `events.notifications`
+### ~~[CRITICAL] Booking lifecycle events routed to phantom queue `events.notifications`~~ — RESOLVED
 
 Services affected: event-receiver, event-saver
 Location: `event-receiver/event_receiver/config.py:9-34`
 Description: The first 5 routing rules in `_default_route_rules()` send `booking.created`, `booking.cancelled`, `booking.rescheduled`, `booking.reassigned`, and `booking.reminder_sent` to a queue named `events.notifications`. Because `EventRouter.resolve_routing_key_by_fields()` returns the **first** matching rule, these rules shadow the correct `events.booking.lifecycle` and `events.booking.reminder` rules that appear later (lines 36-58). The queue `events.notifications` does not appear in `QUEUES_DIGEST.md`, is not declared by the topology manager (because it is not in `routing_destinations` either — it IS because `routing_destinations` includes all rule destinations), and is not consumed by `event-saver`. All booking lifecycle events are silently routed to an unconsumed queue; they will never reach event-saver. This is a data-loss bug.
-Recommendation: Remove the five `events.notifications` routing rules entirely (lines 9-34 in config.py). The `events.booking.lifecycle` and `events.booking.reminder` rules that follow are the correct targets and already align with event-saver's consumer config and QUEUES_DIGEST.md. Verify that `events.notifications` was not intentionally created for a future service before deleting; if it was, add it to QUEUES_DIGEST.md with a clear owner.
+**Resolution**: The five phantom `events.notifications` routing rules have been removed from `config.py`. Booking lifecycle events now correctly route to `events.booking.lifecycle` and `events.booking.reminder`.
 
 ---
 
-### [CRITICAL] JWT `verify()` raises `ValueError` instead of `UnauthorizedError` — uncaught 500 on claim mismatch
+### ~~[CRITICAL] JWT `verify()` raises `ValueError` instead of `UnauthorizedError` — uncaught 500 on claim mismatch~~ — RESOLVED
 
 Services affected: event-receiver
 Location: `event-receiver/event_receiver/security.py:81,88` + `event-receiver/event_receiver/routes.py:52-53`
 Description: `AuthorizationJWTVerifier.verify()` raises `ValueError` when the JWT `source` or `type` claim does not match the incoming event (lines 81, 88 of security.py). The HTTP error mapper in `routes.py` only catches `IngestError` subclasses (`BadRequestError`, `UnauthorizedError`, `ConfigurationError`). A `ValueError` escapes this handler and is caught by the final `except IngestError` fallback — except `ValueError` is not an `IngestError`. FastAPI will therefore return a raw 500 with no log of the auth failure being a deliberate rejection. This is also a security issue because the caller receives no indication that their token was rejected for auth reasons.
-Recommendation: In `security.py:verify()`, replace both `raise ValueError(...)` with `raise UnauthorizedError(...)` (already imported). Alternatively, catch `ValueError` in `ingest_jitsi` and re-raise as `UnauthorizedError`.
+**Resolution**: `security.py:verify()` now raises `UnauthorizedError` instead of `ValueError` on claim mismatch. Auth rejections are correctly returned as HTTP 401.
 
 ---
 
-### [CRITICAL] `RequestLoggerMiddleware` writes raw request bodies (including secrets) to an unrotated local file
+### ~~[CRITICAL] `RequestLoggerMiddleware` writes raw request bodies (including secrets) to an unrotated local file~~ — RESOLVED
 
 Services affected: event-receiver
 Location: `event-receiver/event_receiver/main.py:32,35-53`
 Description: `RequestLoggerMiddleware` appends every POST request body (headers + decoded JSON) to `incoming_requests.jsonl` at a relative path (`Path("incoming_requests.jsonl")`). This file grows unboundedly with no rotation, size cap, or TTL. It is always active — there is no guard on `settings.debug`. In production, this will contain webhook payloads with auth tokens, emails, booking data, and API keys. The relative path resolves relative to the CWD of the uvicorn process, which may not be a writable or monitored location in a container. Additionally, the file is appended synchronously via `anyio.open_file` but without any concurrent-write protection — under load, multiple workers will race to append to the same file.
-Recommendation: (1) Gate this middleware behind `settings.debug` — remove it entirely from the production middleware stack when `debug=False`. (2) If debug logging is needed in production, replace the file with a structlog `debug`-level log entry so it participates in the normal log pipeline. (3) Remove hardcoded `_REQUEST_LOG_FILE` path constant and add it to Settings if it must remain.
+**Resolution**: `RequestLoggerMiddleware` is now gated behind `settings.debug`. It is not active in production (`DEBUG=False`).
 
 ---
 
@@ -48,21 +48,21 @@ Recommendation: Move container construction inside `lifespan` or into a factory 
 
 ---
 
-### [HIGH] `ingest_getstream` raises `KeyError` on missing `X-SIGNATURE` header — no UnauthorizedError
+### ~~[HIGH] `ingest_getstream` raises `KeyError` on missing `X-SIGNATURE` header — no UnauthorizedError~~ — RESOLVED
 
 Services affected: event-receiver
 Location: `event-receiver/event_receiver/controllers/ingest.py:201`
 Description: `headers["X-SIGNATURE"]` uses direct dict access on the Starlette `Headers` object. If the `X-SIGNATURE` header is absent (malformed or non-GetStream request hitting the endpoint), this raises a `KeyError`, which is not caught in the controller and is not an `IngestError`. The `routes.py` error mapper will return HTTP 500 instead of 401. This also logs at the wrong level — it will appear as an unexpected server error rather than an auth failure.
-Recommendation: Replace `headers["X-SIGNATURE"]` with `headers.get("X-SIGNATURE")`. Check for `None` and raise `UnauthorizedError("Missing X-SIGNATURE header")` before calling `client.verify_webhook`.
+**Resolution**: `headers.get("X-SIGNATURE")` is now used; an explicit `None` check raises `UnauthorizedError("Missing X-SIGNATURE header")` before calling `client.verify_webhook`.
 
 ---
 
-### [HIGH] No retry or circuit-breaker on `event-users` HTTP calls inside publish path
+### ~~[HIGH] No retry or circuit-breaker on `event-users` HTTP calls inside publish path~~ — RESOLVED
 
 Services affected: event-receiver, event-users
 Location: `event-receiver/event_receiver/adapters/users_client.py:17-48` + `event-receiver/event_receiver/adapters/publisher.py:86-90`
 Description: `UserResolver.resolve_or_create()` is called inside `CloudEventPublisher.publish()` for every participant in every event. There is no retry policy, exponential backoff, or circuit-breaker. A transient event-users timeout or HTTP 5xx will propagate as an unhandled `httpx.HTTPStatusError` or `httpx.TimeoutException` from the publish path, causing the HTTP response to the original webhook caller to be a 500. No message is published to RabbitMQ. The 10-second timeout (`ioc.py:93`) is correct but a single slow `event-users` call directly extends the webhook response latency by up to 10 seconds. `tenacity` is already in `pyproject.toml` dependencies but unused.
-Recommendation: Wrap `_get_user` and `_create_user` with `tenacity.retry` (exponential backoff, 3 attempts). Catch `httpx.HTTPStatusError` and `httpx.TimeoutException` in `UserResolver` and raise a domain error (e.g., a new `ServiceUnavailableError`) that maps to HTTP 503 in `routes.py`, preventing silent 500s. Consider making user enrichment optional (fallback to `user_id=None`) to decouple RabbitMQ publish availability from event-users availability.
+**Resolution**: `_get_user` and `_create_user` are now wrapped with `tenacity.retry` (exponential backoff, 3 attempts). On exhausted retries, `UserResolver` falls back gracefully to `user_id=None` rather than propagating the error to the caller. Event is still published to RabbitMQ with `user_id=None` in the participant entry.
 
 ---
 
@@ -84,12 +84,12 @@ Recommendation: Wrap `broker.connect()` in a retry loop with exponential backoff
 
 ---
 
-### [HIGH] `events.notifications` phantom queue will be declared and bound at startup
+### ~~[HIGH] `events.notifications` phantom queue will be declared and bound at startup~~ — RESOLVED
 
 Services affected: event-receiver
 Location: `event-receiver/event_receiver/adapters/publisher.py:161-196` + `event-receiver/event_receiver/config.py:10-30`
 Description: Because `settings.routing_destinations` includes all rule destinations, `topology_queues` will include `events.notifications`. The topology manager will declare this queue, create a DLQ for it (`events.notifications.dlq`), and bind it to the exchange. No consumer will ever drain it. This is a waste of broker resources and will accumulate unacknowledged messages indefinitely. This is a consequence of the [CRITICAL] routing bug above but is separately observable.
-Recommendation: Fix the root cause (remove `events.notifications` rules). Additionally, add a startup validation that cross-checks `settings.routing_destinations` against a known-good consumer manifest (or event-saver's config) to catch future divergence.
+**Resolution**: Resolved as a consequence of removing the phantom `events.notifications` routing rules (see CRITICAL finding above). The queue is no longer declared.
 
 ---
 
@@ -124,30 +124,30 @@ Recommendation: Update QUEUES_DIGEST.md table to show the actual `source_pattern
 
 ---
 
-### [MEDIUM] CORS wildcard `allow_origins=["*"]` with `allow_credentials=True` is security misconfiguration
+### ~~[MEDIUM] CORS wildcard `allow_origins=["*"]` with `allow_credentials=True` is security misconfiguration~~ — RESOLVED
 
 Services affected: event-receiver
 Location: `event-receiver/event_receiver/main.py:95-99`
 Description: `CORSMiddleware` is configured with `allow_origins=["*"]` and `allow_credentials=True`. Browsers will reject credentialed CORS responses when origin is a wildcard — this combination is invalid per the Fetch spec and will cause CORS failures in any browser-based client. More critically, it signals that CORS policy has not been thought through. The event-receiver is a webhook ingress service; it is unclear why CORS middleware is needed at all unless the frontend calls it directly.
-Recommendation: If the admin frontend (`event-admin-frontend`) calls event-receiver directly, set `allow_origins` to an explicit list of known origins. If event-receiver is only called by server-to-server webhooks, remove `CORSMiddleware` entirely.
+**Resolution**: `allow_origins` is now read from the `CORS_ORIGINS` environment variable instead of being hardcoded as `["*"]`.
 
 ---
 
-### [MEDIUM] `ingest_jitsi` calls `verify_signature` then `verify` with the same token — double-decode and security gap
+### ~~[MEDIUM] `ingest_jitsi` calls `verify_signature` then `verify` with the same token — double-decode and security gap~~ — RESOLVED
 
 Services affected: event-receiver
 Location: `event-receiver/event_receiver/controllers/ingest.py:47,64-68`
 Description: `ingest_jitsi` calls `verify_signature(token=headers.get("Authorization"))` first to validate the JWT signature, then calls `verify(token=..., event_source=..., event_type=...)` which decodes the JWT a second time with `verify_signature=False`. The second call skips all cryptographic verification — it only checks claims without re-verifying the signature. This means the second `jwt.decode` call trusts any token that was initially valid, but if there is a TOCTOU bug (e.g., the header value changes between calls, which cannot happen here but is architecturally fragile), it would silently trust an unverified token. Also, passing `token=headers.get("Authorization")` (which can be `None`) to `verify_signature` does not raise a typed domain error — PyJWT will raise `jwt.DecodeError` which bubbles as a non-`IngestError`.
-Recommendation: Refactor `verify()` to accept pre-parsed claims (from `verify_signature()`) rather than re-decoding the token. This eliminates the double-decode and ensures signature verification cannot be bypassed. Handle `None` token in `verify_signature` explicitly: `if not token: raise UnauthorizedError("Missing Authorization header")`.
+**Resolution**: `verify()` now accepts pre-parsed claims returned by `verify_signature()` instead of re-decoding the token. The double-decode is eliminated and signature verification cannot be bypassed.
 
 ---
 
-### [MEDIUM] `ingest_booking` mutates `incoming.data` in place via `.pop()` — unexpected side effects
+### ~~[MEDIUM] `ingest_booking` mutates `incoming.data` in place via `.pop()` — unexpected side effects~~ — RESOLVED
 
 Services affected: event-receiver
 Location: `event-receiver/event_receiver/controllers/ingest.py:111`
 Description: `booking_uid = incoming.data.pop("booking_uid", None)` mutates the CloudEvent's data dict in place. If `incoming.data` is referenced elsewhere (e.g., by `from_http` internals, or in future code that logs the original event), the `booking_uid` will be missing. This is also inconsistent with `ingest_unisender_go` line 186, which also `.pop()`s from nested dict. Mutation of parsed input objects is error-prone and violates the expectation that parsed data is read-only.
-Recommendation: Use `data = dict(incoming.data)` to create a shallow copy before calling `.pop()`. For the nested metadata case in `ingest_unisender_go`, similarly copy `event_data.metadata` before mutating.
+**Resolution**: A shallow dict copy (`data = dict(incoming.data)`) is now used before calling `.pop()`, preserving the original CloudEvent data.
 
 ---
 
@@ -160,12 +160,12 @@ Recommendation: In Docker builds, use a multi-stage build that copies `event-sch
 
 ---
 
-### [MEDIUM] `ingest_unisender_go` has no event_id or event_time — publishes CloudEvents with missing required attributes
+### ~~[MEDIUM] `ingest_unisender_go` has no event_id or event_time — publishes CloudEvents with missing required attributes~~ — RESOLVED
 
 Services affected: event-receiver, event-saver
 Location: `event-receiver/event_receiver/controllers/ingest.py:185-193`
 Description: When publishing UniSender events, `self._publisher.publish()` is called without `event_id` or `event_time` arguments. In `publisher.py`, these become `None` and are omitted from the CloudEvent attributes (lines 105-108). The CloudEvents spec requires `id` and `time` attributes in all events. event-saver's consumer (`consumer.py:98`) calls `event["time"]` — if `time` is absent, this raises a `KeyError` and the message will be nacked/dead-lettered.
-Recommendation: Generate `event_id = str(uuid.uuid4())` and `event_time = datetime.now(UTC).isoformat()` in `ingest_unisender_go` before calling `publish()`. This is consistent with how other ingest methods receive these from `from_http`.
+**Resolution**: `ingest_unisender_go` now generates `event_id = str(uuid.uuid4())` and `event_time = datetime.now(UTC).isoformat()` before calling `publish()`.
 
 ---
 
@@ -227,12 +227,12 @@ Recommendation: Replace `-> Callable` with `-> Callable[[str], str]` in `ioc.py:
 
 ---
 
-### [LOW] `IngestController` is in `Scope.REQUEST` but has no per-request state — unnecessary allocation
+### ~~[LOW] `IngestController` is in `Scope.REQUEST` but has no per-request state — unnecessary allocation~~ — RESOLVED
 
 Services affected: event-receiver
 Location: `event-receiver/event_receiver/ioc.py:133-145`
 Description: `IngestController` is provided at `Scope.REQUEST`, creating a new instance on every HTTP request. Examining `IngestController.__init__`, all its fields (`_settings`, `_publisher`, `_authorization_jwt_verifier`) are `Scope.APP` singletons. There is no request-scoped state in the controller. Creating it per-request adds overhead without benefit.
-Recommendation: Change `@provide(scope=Scope.REQUEST)` to `@provide(scope=Scope.APP)` for `IngestController`. If per-request state is needed in future, revisit at that time.
+**Resolution**: `IngestController` is now provided at `Scope.APP`.
 
 ---
 
@@ -247,18 +247,18 @@ Recommendation: Add at minimum: (1) unit tests for `EventRouter.resolve_routing_
 
 ## Summary
 
-| Severity | Count |
-|---|---|
-| CRITICAL | 4 |
-| HIGH | 5 |
-| MEDIUM | 9 |
-| LOW | 6 |
-| **Total** | **24** |
+| Severity | Open | Resolved | Total |
+|---|---|---|---|
+| CRITICAL | 1 | 3 | 4 |
+| HIGH | 3 | 2 | 5 |
+| MEDIUM | 5 | 4 | 9 |
+| LOW | 5 | 1 | 6 |
+| **Total** | **14** | **10** | **24** |
 
-### Top 3 Concerns
+### Top Open Concerns
 
-1. **Booking lifecycle events never reach event-saver** (`CRITICAL` — config.py routing). The first 5 routing rules send `booking.created`, `booking.cancelled`, `booking.rescheduled`, `booking.reassigned`, and `booking.reminder_sent` to the undocumented, unconsumed `events.notifications` queue. Because routing is first-match, the correct `events.booking.lifecycle` rules are never reached. This is a total data-loss bug for the most critical event types in the system.
+1. **Module-level container construction executes at import time** (`CRITICAL` — main.py). `make_async_container(...)` is called unconditionally at module import time, causing container and provider instantiation before settings are validated.
 
-2. **JWT claim mismatch raises `ValueError` instead of `UnauthorizedError`** (`CRITICAL` — security.py). When Jitsi JWT `source` or `type` claims do not match the event, `security.py:verify()` raises a plain `ValueError` that is not caught by the `IngestError` handler in `routes.py`. This results in an unhandled HTTP 500 instead of a 401, and the auth rejection is never logged as such — it appears as an unexpected server error.
+2. **No idempotency enforcement at event-receiver layer** (`HIGH` — publisher.py). Duplicate webhook deliveries produce duplicate RabbitMQ messages; deduplication is delegated entirely to event-saver's DB constraints.
 
-3. **`RequestLoggerMiddleware` persists all webhook payloads (including secrets) to an unrotated local file unconditionally** (`CRITICAL` — main.py). This middleware is always active, writes full request bodies (headers, decoded JSON, auth tokens) to `incoming_requests.jsonl` with no size limit, rotation, or debug gate. In any deployment, this is a credential exfiltration risk and a disk-exhaustion risk.
+3. **RabbitMQ connect failure at startup has no retry** (`HIGH` — main.py). `broker.connect()` in `lifespan` is called with no retry or timeout, causing crash-loop restarts if RabbitMQ is not yet ready.
