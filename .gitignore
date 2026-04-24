@@ -142,3 +142,8 @@ pyrightconfig.json
 /opensearch_data/
 # Added by code-review-graph
 .code-review-graph/
+
+# Data/log files
+*.jsonl
+evaluate/
+simulate_booking.py
