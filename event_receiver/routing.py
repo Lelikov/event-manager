@@ -2,7 +2,7 @@ import fnmatch
 from dataclasses import dataclass
 
 import structlog
-from cloudevents.pydantic import CloudEvent
+from cloudevents.v1.pydantic.v2.event import CloudEvent
 from pydantic import BaseModel, Field
 
 

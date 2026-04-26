@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 import ujson
-from cloudevents.pydantic import from_http
+from cloudevents.v1.pydantic.v2.conversion import from_http
 from event_schemas.booking import BookingCreatedPayload
 from event_schemas.types import EventType
 from pydantic import ValidationError

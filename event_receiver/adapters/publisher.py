@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import structlog
-from cloudevents.http import CloudEvent, to_binary
+from cloudevents.core.v1.event import CloudEvent
+from cloudevents.v1.http.http_methods import to_binary
 from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPriority, EventType
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
 
