@@ -246,12 +246,14 @@ class IngestController(IIngestController):
             raise BadRequestError("Invalid Admin event payload or headers") from exc
 
         data = dict(incoming.data) if incoming.data else {}
+        booking_id = data.get("booking_uid") or None
 
         await self._publisher.publish(
             source=incoming.source,
             event_type=incoming.type,
             event_id=incoming.id,
             event_time=incoming.time,
+            booking_id=booking_id,
             data=data,
             trace_id=trace_id,
         )
