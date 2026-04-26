@@ -17,6 +17,7 @@
 | `events.jitsi` | `jitsi*` | `*` | все Jitsi-события |
 | `events.mail` | `unisender-go` | `unisender.*` | события UniSender |
 | `events.chat` | `getstream` | `getstream.*` | события GetStream |
+| `events.user.email` | `admin` | `user.email.*` | запросы смены email клиента |
 | `events.unrouted` | fallback | fallback | все события без match по rules |
 
 ## events.booking.lifecycle
@@ -72,6 +73,15 @@
 События GetStream:
 - `source_pattern = "getstream"`
 - `type_pattern = "getstream.*"`
+
+## events.user.email
+
+События запроса смены email клиента:
+- `source_pattern = "admin"`
+- `type_pattern = "user.email.*"`
+
+Поступают через эндпоинт `POST /event/admin` (auth: static API key в заголовке `Authorization`).
+Потребитель: `event-users` (FastStream RabbitMQ consumer).
 
 ## events.unrouted
 
