@@ -96,6 +96,11 @@ def _default_route_rules() -> list[RouteRule]:
             source_pattern="admin",
             type_pattern="user.email.*",
         ),
+        RouteRule(
+            destination="events.booking.lifecycle",
+            source_pattern="admin",
+            type_pattern="booking.client_reassigned",
+        ),
     ]
 
 
