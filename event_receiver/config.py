@@ -91,6 +91,11 @@ def _default_route_rules() -> list[RouteRule]:
             source_pattern="getstream",
             type_pattern="getstream.*",
         ),
+        RouteRule(
+            destination="events.user.email",
+            source_pattern="admin",
+            type_pattern="user.email.*",
+        ),
     ]
 
 
@@ -123,6 +128,7 @@ class Settings(BaseSettings):
     getstream_user_id_encryption_key: str = Field(strict=True)
 
     booking_api_key: str = Field(strict=True)
+    admin_api_key: str = Field(strict=True)
 
     event_users_api_url: str = Field(strict=True)
     event_users_api_token: str = Field(strict=True)

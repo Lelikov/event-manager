@@ -17,6 +17,7 @@ INGEST_ROUTE_TO_METHOD = {
     "/event/getstream": "ingest_getstream",
     "/event/jitsi": "ingest_jitsi",
     "/event/unisender-go": "ingest_unisender_go",
+    "/event/admin": "ingest_admin",
 }
 
 

@@ -231,6 +231,38 @@ class IngestController(IIngestController):
         )
         logger.info("Getstream ingest completed", trace_id=trace_id)
 
+    async def ingest_admin(self, *, headers: Mapping[str, str], body: bytes) -> None:
+        trace_id = extract_trace_id_from_headers(dict(headers))
+        logger.info("Started Admin ingest", trace_id=trace_id)
+
+        if self._settings.admin_api_key != headers.get("Authorization"):
+            logger.warning("Admin ingest failed: invalid API key")
+            raise UnauthorizedError("Invalid Admin API key")
+
+        try:
+            incoming = from_http(headers=headers, data=body)
+        except Exception as exc:
+            logger.warning("Admin event parsing failed")
+            raise BadRequestError("Invalid Admin event payload or headers") from exc
+
+        data = dict(incoming.data) if incoming.data else {}
+
+        await self._publisher.publish(
+            source=incoming.source,
+            event_type=incoming.type,
+            event_id=incoming.id,
+            event_time=incoming.time,
+            data=data,
+            trace_id=trace_id,
+        )
+        logger.info(
+            "Admin ingest completed",
+            source=incoming.source,
+            event_type=incoming.type,
+            event_id=incoming.id,
+            trace_id=trace_id,
+        )
+
     @staticmethod
     def _replace_auth_with_api_key(*, body: str, api_key: str) -> str:
         return re.sub(r'("auth"\s*:\s*")[^"]*(")', rf"\g<1>{api_key}\g<2>", body, count=1)
