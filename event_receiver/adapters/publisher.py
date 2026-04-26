@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import structlog
+from cloudevents.core.bindings.http import to_binary
+from cloudevents.core.formats.json import JSONFormat
 from cloudevents.core.v1.event import CloudEvent
-from cloudevents.v1.http.http_methods import to_binary
 from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPriority, EventType
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
 
@@ -123,15 +124,16 @@ class CloudEventPublisher(ICloudEventPublisher):
         if booking_id:
             attributes["booking_id"] = booking_id
 
-        event = CloudEvent(attributes=attributes, data=normalized_data)
-        headers, body = to_binary(event)
+        event = CloudEvent(attributes=attributes, data=json.dumps(normalized_data).encode())
+        message = to_binary(event, JSONFormat())
+        headers = dict(message.headers)
 
         await self._broker.publish(
-            body,
+            message.body,
             exchange=self._exchange,
             routing_key=routing_key,
             headers=headers,
-            content_type=headers.pop("content-type", "application/json"),
+            content_type="application/json",
             message_type=event_type_str,
             priority=priority.value,  # RabbitMQ priority
         )
