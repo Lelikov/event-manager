@@ -122,7 +122,7 @@ class CloudEventPublisher(ICloudEventPublisher):
         if event_time:
             attributes["time"] = event_time
         if booking_id:
-            attributes["booking_id"] = booking_id
+            attributes["bookingid"] = booking_id
 
         event = CloudEvent(attributes=attributes, data=json.dumps(normalized_data).encode())
         message = to_binary(event, JSONFormat())
