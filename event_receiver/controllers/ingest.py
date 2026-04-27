@@ -203,7 +203,7 @@ class IngestController(IIngestController):
                     source="unisender-go",
                     event_type=EventType.UNISENDER_STATUS_CREATED,
                     event_id=str(uuid.uuid4()),
-                    event_time=datetime.now(UTC).isoformat(),
+                    event_time=datetime.now(UTC),
                     booking_id=booking_uid,
                     data=event_copy,
                     trace_id=trace_id,

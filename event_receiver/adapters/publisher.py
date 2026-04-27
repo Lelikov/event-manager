@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -120,6 +121,9 @@ class CloudEventPublisher(ICloudEventPublisher):
         if event_id:
             attributes["id"] = event_id
         if event_time:
+            # CloudEvents 2.0 requires datetime, not string
+            if isinstance(event_time, str):
+                event_time = datetime.fromisoformat(event_time)
             attributes["time"] = event_time
         if booking_id:
             attributes["bookingid"] = booking_id
