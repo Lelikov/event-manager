@@ -27,6 +27,11 @@ def _default_route_rules() -> list[RouteRule]:
             type_pattern="booking.cancelled",
         ),
         RouteRule(
+            destination="events.booking.lifecycle",
+            source_pattern="booking",
+            type_pattern="booking.rejected",
+        ),
+        RouteRule(
             destination="events.booking.reminder",
             source_pattern="booking",
             type_pattern="booking.reminder_sent",
