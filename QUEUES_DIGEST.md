@@ -6,7 +6,7 @@
 
 | Queue | Source Pattern | Type Pattern | Events |
 |---|---|---|---|
-| `events.booking.lifecycle` | `booking` | `booking.created` / `booking.rescheduled` / `booking.reassigned` / `booking.cancelled` | lifecycle бронирования |
+| `events.booking.lifecycle` | `booking` | `booking.created` / `booking.rescheduled` / `booking.reassigned` / `booking.cancelled` / `booking.rejected` | lifecycle бронирования |
 | `events.booking.reminder` | `booking` | `booking.reminder_sent` | отправка напоминаний |
 | `events.chat.lifecycle` | `booking` | `chat.created` / `chat.deleted` | lifecycle чата |
 | `events.chat.activity` | `booking` | `chat.message_sent` | активность в чате |
@@ -27,6 +27,7 @@
 - `booking.rescheduled`
 - `booking.reassigned`
 - `booking.cancelled`
+- `booking.rejected` — (от event-booking при нарушении constraint validation)
 
 ## events.booking.reminder
 
@@ -207,5 +208,7 @@ Fallback-очередь по умолчанию:
 Очередь команд для event-notifier сервиса:
 - `notification.send_requested` — запрос на отправку уведомлений по всем каналам
 
-**Консьюмер:** `event-notifier` (ещё не задеплоен)
+**Продюсер:** `event-booking` (от orchestration service при processing booking events)
+**Консьюмер:** `event-notifier`
 **Source pattern:** `*` (любой сервис может отправить команду)
+**Типовой источник:** `booking` (от event-booking)
