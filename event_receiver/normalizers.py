@@ -5,28 +5,28 @@ that event-saver can easily consume without complex extraction logic.
 """
 
 import binascii
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 from event_schemas import (
     BookingCreatedPayload,
+    BookingRejectedPayload,
     BookingReminderSentPayload,
     GetStreamEventPayload,
     JitsiEventPayload,
+    NotificationCommandPayload,
     UniSenderStatusPayload,
 )
 from event_schemas.types import EventType
 from pydantic import ValidationError
 
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 logger = structlog.get_logger(__name__)
 
 
 def normalize_event_payload(
-    event_type: EventType,
+    event_type: EventType | None,
     payload: dict[str, Any],
     *,
     getstream_decoder: Callable[[str], str] | None = None,
@@ -34,7 +34,7 @@ def normalize_event_payload(
     """Normalize event payload to standard structure.
 
     Args:
-        event_type: Event type enum
+        event_type: Event type enum (None for types unknown to the enum)
         payload: Original event payload (dict)
         getstream_decoder: Optional decoder for GetStream encrypted user IDs
 
@@ -44,6 +44,9 @@ def normalize_event_payload(
         If normalization fails, normalized participants list is empty.
 
     """
+    if event_type is None:
+        return {"original": payload, "normalized": {"participants": []}}
+
     try:
         participants = _extract_participants(event_type, payload, getstream_decoder=getstream_decoder)
     except (ValidationError, KeyError, ValueError) as e:
@@ -60,49 +63,15 @@ def _extract_participants(
     getstream_decoder: Callable[[str], str] | None = None,
 ) -> list[dict[str, Any]]:
     """Extract participants from payload based on event type."""
-    match event_type:
-        case EventType.BOOKING_CREATED:
-            return _participants_from_booking_created(payload)
-        case EventType.BOOKING_CANCELLED | EventType.BOOKING_REASSIGNED | EventType.BOOKING_RESCHEDULED:
-            return _participants_from_users_list(payload)
-        case EventType.BOOKING_REMINDER_SENT:
-            return _participants_from_booking_reminder_sent(payload)
-        case EventType.MEETING_URL_CREATED | EventType.MEETING_URL_DELETED:
-            return _participants_from_users_list(payload)
-        case EventType.NOTIFICATION_EMAIL_SENT | EventType.NOTIFICATION_TELEGRAM_SENT:
-            return _participants_from_users_list(payload)
-        case EventType.UNISENDER_STATUS_CREATED:
-            return _participants_from_unisender_status(payload)
-        case (
-            EventType.GETSTREAM_MESSAGE_NEW
-            | EventType.GETSTREAM_MESSAGE_UPDATED
-            | EventType.GETSTREAM_MESSAGE_DELETED
-            | EventType.GETSTREAM_MESSAGE_READ
-            | EventType.GETSTREAM_CHANNEL_CREATED
-            | EventType.GETSTREAM_CHANNEL_DELETED
-        ):
-            return _participants_from_getstream_event(payload, getstream_decoder=getstream_decoder)
-        case (
-            EventType.JITSI_CONFERENCE_JOINED
-            | EventType.JITSI_CONFERENCE_LEFT
-            | EventType.JITSI_PARTICIPANT_JOINED
-            | EventType.JITSI_PARTICIPANT_LEFT
-            | EventType.JITSI_PARTICIPANT_MUTED
-            | EventType.JITSI_PARTICIPANT_MENU_BUTTON_CLICK
-            | EventType.JITSI_AUDIO_MUTE_STATUS_CHANGED
-            | EventType.JITSI_VIDEO_MUTE_STATUS_CHANGED
-            | EventType.JITSI_SPEAKER_DOMINANT_CHANGED
-            | EventType.JITSI_DEVICE_LIST_CHANGED
-            | EventType.JITSI_CAMERA_ERROR
-            | EventType.JITSI_MIC_ERROR
-            | EventType.JITSI_ERROR_OCCURRED
-            | EventType.JITSI_PEER_CONNECTION_FAILURE
-            | EventType.JITSI_SUSPEND_DETECTED
-            | EventType.JITSI_TOOLBAR_BUTTON_CLICKED
-        ):
-            return _participants_from_jitsi_event(payload)
-        case _:
-            return []
+    if event_type.value.startswith("getstream."):
+        return _participants_from_getstream_event(payload, getstream_decoder=getstream_decoder)
+    if event_type.value.startswith("jitsi."):
+        return _participants_from_jitsi_event(payload)
+
+    extractor = _PARTICIPANT_EXTRACTORS.get(event_type)
+    if extractor is None:
+        return []
+    return extractor(payload)
 
 
 def _participants_from_users_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -112,6 +81,29 @@ def _participants_from_users_list(payload: dict[str, Any]) -> list[dict[str, Any
         for user in payload.get("users", [])
         if user.get("email")
     ]
+
+
+def _participants_from_recipient(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract the single recipient from meeting.url_* payloads ({email, recipient_role}).
+
+    Falls back to the legacy 'users' list shape if 'email' is absent.
+    """
+    email = payload.get("email")
+    if not email or not isinstance(email, str):
+        return _participants_from_users_list(payload)
+    role = payload.get("recipient_role")
+    return [{"email": email, "role": role if isinstance(role, str) else None}]
+
+
+def _participants_from_notification_command(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract participants from notification.send_requested recipients ({email, role})."""
+    validated = NotificationCommandPayload(**payload)
+    return [{"email": recipient.email, "role": recipient.role.value} for recipient in validated.recipients]
+
+
+def _participants_from_booking_rejected(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    validated = BookingRejectedPayload(**payload)
+    return [{"email": validated.client_email, "role": "client"}]
 
 
 def _participants_from_booking_created(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -187,3 +179,19 @@ def _participants_from_jitsi_event(payload: dict[str, Any]) -> list[dict[str, An
 
     role = user.get("role")
     return [{"email": email, "role": role if isinstance(role, str) else None}]
+
+
+_PARTICIPANT_EXTRACTORS: dict[EventType, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
+    EventType.BOOKING_CREATED: _participants_from_booking_created,
+    EventType.BOOKING_CANCELLED: _participants_from_users_list,
+    EventType.BOOKING_REASSIGNED: _participants_from_users_list,
+    EventType.BOOKING_RESCHEDULED: _participants_from_users_list,
+    EventType.BOOKING_REMINDER_SENT: _participants_from_booking_reminder_sent,
+    EventType.BOOKING_REJECTED: _participants_from_booking_rejected,
+    EventType.MEETING_URL_CREATED: _participants_from_recipient,
+    EventType.MEETING_URL_DELETED: _participants_from_recipient,
+    EventType.NOTIFICATION_SEND_REQUESTED: _participants_from_notification_command,
+    EventType.NOTIFICATION_EMAIL_SENT: _participants_from_users_list,
+    EventType.NOTIFICATION_TELEGRAM_SENT: _participants_from_users_list,
+    EventType.UNISENDER_STATUS_CREATED: _participants_from_unisender_status,
+}

@@ -119,3 +119,67 @@ class TestMalformedPayloads:
     def test_empty_payload_returns_empty_participants(self) -> None:
         result = normalize_event_payload(EventType.BOOKING_REMINDER_SENT, {})
         assert result["normalized"]["participants"] == []
+
+
+class TestNotificationCommandNormalizer:
+    def test_extracts_participants_from_recipients(self) -> None:
+        payload = {
+            "booking_id": "b-1",
+            "trigger_event": "BOOKING_CREATED",
+            "recipients": [
+                {"email": "org@example.com", "role": "organizer"},
+                {"email": "cli@example.com", "role": "client"},
+            ],
+            "template_data": {"title": "Session"},
+        }
+
+        result = normalize_event_payload(EventType.NOTIFICATION_SEND_REQUESTED, payload)
+
+        assert result["original"] == payload
+        assert result["normalized"]["participants"] == [
+            {"email": "org@example.com", "role": "organizer"},
+            {"email": "cli@example.com", "role": "client"},
+        ]
+
+    def test_invalid_command_payload_yields_empty_participants(self) -> None:
+        result = normalize_event_payload(EventType.NOTIFICATION_SEND_REQUESTED, {"recipients": "garbage"})
+
+        assert result["normalized"]["participants"] == []
+
+
+class TestBookingRejectedNormalizer:
+    def test_extracts_client_participant(self) -> None:
+        payload = {"client_email": "cli@example.com", "rejection_reasons": ["limit"]}
+
+        result = normalize_event_payload(EventType.BOOKING_REJECTED, payload)
+
+        assert result["normalized"]["participants"] == [{"email": "cli@example.com", "role": "client"}]
+
+
+class TestMeetingUrlNormalizer:
+    def test_extracts_recipient_from_canonical_payload(self) -> None:
+        payload = {
+            "email": "org@example.com",
+            "recipient_role": "organizer",
+            "meeting_url": "https://meet.example.com/x",
+        }
+
+        result = normalize_event_payload(EventType.MEETING_URL_CREATED, payload)
+
+        assert result["normalized"]["participants"] == [{"email": "org@example.com", "role": "organizer"}]
+
+    def test_falls_back_to_legacy_users_list(self) -> None:
+        payload = {"users": [{"email": "cli@example.com", "role": "client"}]}
+
+        result = normalize_event_payload(EventType.MEETING_URL_DELETED, payload)
+
+        assert result["normalized"]["participants"] == [{"email": "cli@example.com", "role": "client"}]
+
+
+class TestUnknownEventType:
+    def test_none_event_type_returns_envelope_with_empty_participants(self) -> None:
+        payload = {"type": "member.added", "anything": 1}
+
+        result = normalize_event_payload(None, payload)
+
+        assert result == {"original": payload, "normalized": {"participants": []}}

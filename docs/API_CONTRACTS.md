@@ -179,7 +179,7 @@ Routing is first-match based on glob patterns (`routing.py:43-65`, rules in `con
 | `events.booking.lifecycle` | `booking` | `booking.rescheduled` | 10 (CRITICAL) | `booking.rescheduled` |
 | `events.booking.lifecycle` | `booking` | `booking.reassigned` | 10 (CRITICAL) | `booking.reassigned` |
 | `events.booking.lifecycle` | `booking` | `booking.cancelled` | 10 (CRITICAL) | `booking.cancelled` |
-| `events.booking.reminder` | `booking` | `booking.reminder_sent` | 7 (HIGH) | `booking.reminder_sent` |
+| `events.booking.lifecycle` | `booking` | `booking.reminder_sent` | 7 (HIGH) | `booking.reminder_sent` |
 | `events.chat.lifecycle` | `booking` | `chat.created` | 5 (NORMAL) | `chat.created` |
 | `events.chat.lifecycle` | `booking` | `chat.deleted` | 5 (NORMAL) | `chat.deleted` |
 | `events.chat.activity` | `booking` | `chat.message_sent` | 5 (NORMAL) | `chat.message_sent` |

@@ -6,8 +6,7 @@
 
 | Queue | Source Pattern | Type Pattern | Events |
 |---|---|---|---|
-| `events.booking.lifecycle` | `booking` | `booking.created` / `booking.rescheduled` / `booking.reassigned` / `booking.cancelled` / `booking.rejected` | lifecycle бронирования |
-| `events.booking.reminder` | `booking` | `booking.reminder_sent` | отправка напоминаний |
+| `events.booking.lifecycle` (routing key) | `booking` | `booking.created` / `booking.rescheduled` / `booking.reassigned` / `booking.cancelled` / `booking.rejected` / `booking.reminder_sent` | lifecycle бронирования |
 | `events.chat.lifecycle` | `booking` | `chat.created` / `chat.deleted` | lifecycle чата |
 | `events.chat.activity` | `booking` | `chat.message_sent` | активность в чате |
 | `events.meeting.lifecycle` | `booking` | `meeting.url_created` / `meeting.url_deleted` | lifecycle meeting URL |
@@ -28,11 +27,14 @@
 - `booking.reassigned`
 - `booking.cancelled`
 - `booking.rejected` — (от event-booking при нарушении constraint validation)
+- `booking.reminder_sent` — (зарезервировано, продюсера сейчас нет)
 
-## events.booking.reminder
+К routing key `events.booking.lifecycle` привязаны ДВЕ очереди (fan-out, по одной на консьюмера):
+- `events.booking.lifecycle.saver` — event-saver
+- `events.booking.lifecycle.booking` — event-booking
 
-События про отправку напоминаний:
-- `booking.reminder_sent`
+Очередь `events.booking.reminder` удалена (не имела ни продюсера, ни консьюмера);
+напоминания идут через `notification.send_requested` (trigger `BOOKING_REMINDER`).
 
 ## events.chat.lifecycle
 
@@ -117,7 +119,7 @@ Fallback-очередь по умолчанию:
   - `content-type` вынимается отдельно в параметр `content_type`.
 
 Для booking-событий обычно так:
-- **Headers**: `ce-type`, `ce-source`, `ce-id`, `ce-time`, `ce-booking_id`, `ce-specversion` (+ прочие системные при необходимости)
+- **Headers**: `ce-type`, `ce-source`, `ce-id`, `ce-time`, `ce-bookingid`, `ce-specversion` (+ прочие системные при необходимости)
 - **Payload (body/data)**: поля события **кроме** `booking_uid`.
 
 ### Входящий payload `/event/booking` (контракт источника)
@@ -200,7 +202,7 @@ Fallback-очередь по умолчанию:
 ### Исходящий payload (body/data) в RabbitMQ для booking endpoint
 
 Для всех событий выше действует правило:
-- `booking_uid` переносится в header `ce-booking_id`;
+- `booking_uid` переносится в header `ce-bookingid`;
 - в `body` остаются остальные поля из списка соответствующего события.
 
 ## events.notification.commands
@@ -212,3 +214,16 @@ Fallback-очередь по умолчанию:
 **Консьюмер:** `event-notifier`
 **Source pattern:** `*` (любой сервис может отправить команду)
 **Типовой источник:** `booking` (от event-booking)
+
+## Каноническая топология (audit-v2)
+
+Источник истины — `event_schemas.queues` (`ALL_QUEUES`, `ROUTING_RULES`):
+
+- exchange `events` (topic, durable), DLX `events.dlx` (topic, durable);
+- аргументы каждой очереди (verbatim): `x-max-priority=10`,
+  `x-dead-letter-exchange=events.dlx`, `x-dead-letter-routing-key=<queue>.dlq`;
+- для каждой очереди объявляется `<queue>.dlq` (`x-message-ttl=86400000`), привязанная к `events.dlx`;
+- event-receiver объявляет ПОЛНУЮ топологию на старте; каждый консьюмер
+  идемпотентно объявляет свои очереди с теми же аргументами;
+- одна очередь = один консьюмер; fan-out — через несколько очередей на один routing key;
+- неизвестные `EventType` больше не дают 500: публикуются в `events.unrouted`.

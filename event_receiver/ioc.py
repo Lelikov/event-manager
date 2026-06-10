@@ -121,15 +121,13 @@ class AppProvider(Provider):
     @provide(scope=Scope.APP)
     def provide_topology_manager(
         self,
-        settings: Settings,
         broker: RabbitBroker,
         exchange: RabbitExchange,
     ) -> ITopologyManager:
-        logger.info("Providing RabbitTopologyManager", topology_queue_count=len(settings.topology_queues))
+        logger.info("Providing RabbitTopologyManager (canonical topology from event_schemas)")
         return RabbitTopologyManager(
             broker=broker,
             exchange=exchange,
-            topology_queues=settings.topology_queues,
         )
 
     @provide(scope=Scope.APP)

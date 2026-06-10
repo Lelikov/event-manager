@@ -9,6 +9,13 @@ import structlog
 from cloudevents.core.bindings.http import to_binary
 from cloudevents.core.formats.json import JSONFormat
 from cloudevents.core.v1.event import CloudEvent
+from event_schemas.attributes import (
+    BOOKING_ID_ATTRIBUTE,
+    IDEMPOTENCY_KEY_ATTRIBUTE,
+    SPAN_ID_ATTRIBUTE,
+    TRACE_ID_ATTRIBUTE,
+)
+from event_schemas.queues import ALL_QUEUES, DEFAULT_ROUTING_KEY, EVENTS_DLX, QueueSpec
 from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPriority, EventType
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
 
@@ -27,6 +34,14 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _PUBLISHED_EVENTS_LOG_FILE = Path("published_events.jsonl")
+
+
+def _coerce_event_type(event_type: str) -> EventType | None:
+    """Return the EventType member for a wire type string, or None if unknown."""
+    try:
+        return EventType(event_type)
+    except ValueError:
+        return None
 
 
 class CloudEventPublisher(ICloudEventPublisher):
@@ -60,8 +75,19 @@ class CloudEventPublisher(ICloudEventPublisher):
     ) -> None:
         # Convert EventType enum to string if needed
         event_type_str = event_type.value if isinstance(event_type, EventType) else event_type
+        event_type_enum = _coerce_event_type(event_type_str)
 
         routing_key = self._router_by_event.resolve_routing_key_by_fields(source=source, event_type=event_type_str)
+        if event_type_enum is None:
+            # Unknown type (e.g. a new GetStream webhook type): never 500 —
+            # park it in the unrouted queue with full payload for later triage.
+            routing_key = str(DEFAULT_ROUTING_KEY)
+            logger.warning(
+                "Unknown event type, routing to unrouted queue",
+                source=source,
+                event_type=event_type_str,
+                routing_key=routing_key,
+            )
         logger.debug(
             "Resolved routing key for outbound CloudEvent",
             source=source,
@@ -84,7 +110,6 @@ class CloudEventPublisher(ICloudEventPublisher):
         )
 
         # Get schema version and priority
-        event_type_enum = EventType(event_type_str) if isinstance(event_type, str) else event_type
         schema_version = EVENT_SCHEMA_VERSIONS.get(event_type_enum, "v1")
         priority = EVENT_PRIORITIES.get(event_type_enum, EventPriority.NORMAL)
 
@@ -100,7 +125,7 @@ class CloudEventPublisher(ICloudEventPublisher):
             if not participant.get("user_id"):
                 user_id = await self._user_resolver.resolve_or_create(
                     email=participant["email"],
-                    role=participant["role"],
+                    role=participant.get("role"),
                 )
                 if user_id:
                     participant["user_id"] = user_id
@@ -109,10 +134,10 @@ class CloudEventPublisher(ICloudEventPublisher):
         attributes = {
             "type": event_type_str,
             "source": source,
-            # CloudEvents extensions
-            "traceid": trace_id,
-            "spanid": span_id,
-            "idempotencykey": idempotency_key,
+            # CloudEvents extensions (canonical names from event_schemas.attributes)
+            TRACE_ID_ATTRIBUTE: trace_id,
+            SPAN_ID_ATTRIBUTE: span_id,
+            IDEMPOTENCY_KEY_ATTRIBUTE: idempotency_key,
             "dataschema": f"https://schemas.example.com/{event_type_str}/{schema_version}",
             "datacontenttype": "application/json",
             "publisherservice": "event-receiver",
@@ -126,7 +151,7 @@ class CloudEventPublisher(ICloudEventPublisher):
                 event_time = datetime.fromisoformat(event_time)
             attributes["time"] = event_time
         if booking_id:
-            attributes["bookingid"] = booking_id
+            attributes[BOOKING_ID_ATTRIBUTE] = booking_id
 
         event = CloudEvent(attributes=attributes, data=json.dumps(normalized_data).encode())
         message = to_binary(event, JSONFormat())
@@ -170,71 +195,60 @@ class CloudEventPublisher(ICloudEventPublisher):
 
 
 class RabbitTopologyManager(ITopologyManager):
+    """Declares the FULL canonical broker topology from event_schemas.queues.ALL_QUEUES."""
+
     def __init__(
         self,
         *,
         broker: RabbitBroker,
         exchange: RabbitExchange,
-        topology_queues: set[str],
+        queue_specs: tuple[QueueSpec, ...] = ALL_QUEUES,
     ) -> None:
         self._broker = broker
         self._exchange = exchange
-        self._topology_queues = topology_queues
+        self._queue_specs = queue_specs
 
     async def ensure_topology(self) -> None:
         logger.info(
-            "Ensuring RabbitMQ topology with DLQ and priority support",
+            "Ensuring canonical RabbitMQ topology",
             exchange=self._exchange.name,
-            queue_count=len(self._topology_queues),
+            queue_count=len(self._queue_specs),
         )
         declared_exchange = await self._broker.declare_exchange(self._exchange)
 
-        # Declare Dead Letter Exchange
-        dlx = RabbitExchange(name="events.dlx", type=ExchangeType.TOPIC, durable=True)
+        dlx = RabbitExchange(name=EVENTS_DLX, type=ExchangeType.TOPIC, durable=True)
         declared_dlx = await self._broker.declare_exchange(dlx)
         logger.debug("Dead Letter Exchange declared", exchange=dlx.name)
 
-        for queue_name in self._topology_queues:
-            # Main queue with DLQ and priority support
+        for spec in self._queue_specs:
             main_queue = RabbitQueue(
-                name=queue_name,
+                name=spec.name,
                 durable=True,
-                routing_key=queue_name,
-                arguments={
-                    "x-max-priority": 10,  # Enable priority queues (0-10)
-                    "x-dead-letter-exchange": "events.dlx",  # DLX for failed messages
-                    "x-dead-letter-routing-key": f"{queue_name}.dlq",
-                },
+                routing_key=str(spec.binding),
+                arguments=spec.arguments,
             )
             declared_main_queue = await self._broker.declare_queue(main_queue)
-            await declared_main_queue.bind(exchange=declared_exchange, routing_key=queue_name)
+            await declared_main_queue.bind(exchange=declared_exchange, routing_key=str(spec.binding))
             logger.debug(
-                "Main queue declared with DLQ and priority",
-                queue=queue_name,
-                exchange=self._exchange.name,
-                max_priority=10,
+                "Queue declared",
+                queue=spec.name,
+                binding=str(spec.binding),
+                consumer=spec.consumer,
             )
 
-            # Dead Letter Queue (DLQ)
             dlq = RabbitQueue(
-                name=f"{queue_name}.dlq",
+                name=spec.dlq_name,
                 durable=True,
-                routing_key=f"{queue_name}.dlq",
-                arguments={
-                    "x-message-ttl": 86400000,  # 24 hours TTL for DLQ messages
-                },
+                routing_key=spec.dlq_name,
+                arguments=spec.dlq_arguments,
             )
             declared_dlq = await self._broker.declare_queue(dlq)
-            await declared_dlq.bind(exchange=declared_dlx, routing_key=f"{queue_name}.dlq")
-            logger.debug(
-                "DLQ declared",
-                dlq=f"{queue_name}.dlq",
-                ttl_hours=24,
-            )
+            await declared_dlq.bind(exchange=declared_dlx, routing_key=spec.dlq_name)
+            logger.debug("DLQ declared", dlq=spec.dlq_name)
 
         logger.info(
-            "Rabbit topology ensured with DLQ and priority support",
+            "Rabbit topology ensured",
             exchange=self._exchange.name,
             dlx=dlx.name,
-            queues=sorted(self._topology_queues),
+            queues=sorted(spec.name for spec in self._queue_specs),
         )
