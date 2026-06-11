@@ -141,7 +141,11 @@ class CloudEventPublisher(ICloudEventPublisher):
             getstream_decoder=self._getstream_decoder,
         )
 
-        await self._enrich_participants(normalized_data["normalized"]["participants"])
+        await self._enrich_participants(
+            normalized_data["normalized"]["participants"],
+            event_type_str=event_type_str,
+            booking_id=booking_id,
+        )
 
         # Build CloudEvent attributes with extensions
         attributes = {
@@ -205,8 +209,18 @@ class CloudEventPublisher(ICloudEventPublisher):
             priority=priority.value,
         )
 
-    async def _enrich_participants(self, participants: list[dict[str, Any]]) -> None:
-        """Enrich each participant with their user_id from event-users (skip if already resolved)."""
+    async def _enrich_participants(
+        self,
+        participants: list[dict[str, Any]],
+        *,
+        event_type_str: str,
+        booking_id: str | None,
+    ) -> None:
+        """Enrich each participant with their user_id from event-users (skip if already resolved).
+
+        Resolution failures degrade silently downstream (event-saver persists NULL user_id and
+        nothing backfills it), so every unresolved participant is surfaced as a structured warning.
+        """
         for participant in participants:
             if not participant.get("user_id"):
                 user_id = await self._user_resolver.resolve_or_create(
@@ -215,6 +229,16 @@ class CloudEventPublisher(ICloudEventPublisher):
                 )
                 if user_id:
                     participant["user_id"] = user_id
+
+        unresolved = [p["email"] for p in participants if not p.get("user_id")]
+        if unresolved:
+            logger.warning(
+                "Publishing event with unresolved participant user_ids (event-users degraded?)",
+                event_type=event_type_str,
+                booking_id=booking_id,
+                unresolved_emails=unresolved,
+                unresolved_count=len(unresolved),
+            )
 
     def _is_recent_duplicate(self, idempotency_key: str) -> bool:
         seen_at = self._idempotency_cache.get(idempotency_key)

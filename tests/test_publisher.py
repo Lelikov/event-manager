@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 import pytest
+import structlog.testing
 from aio_pika.exceptions import DeliveryError
 from faststream.rabbit import ExchangeType, RabbitExchange
 
@@ -101,6 +102,20 @@ class TestPublish:
         )
         data = json.loads(broker.published[0]["body"])
         assert data["normalized"]["participants"][0]["user_id"] == "uuid-1"
+
+    async def test_unresolved_user_id_logs_structured_warning(self) -> None:
+        broker = FakeBroker()
+        publisher = make_publisher(broker, user_resolver=FakeUserResolver(user_ids={}))
+        with structlog.testing.capture_logs() as logs:
+            await publisher.publish(
+                source="booking",
+                event_type="booking.cancelled",
+                booking_id="uid-1",
+                data={"users": [{"email": "client@example.com", "role": "client"}]},
+            )
+        assert len(broker.published) == 1
+        warnings = [entry for entry in logs if entry.get("log_level") == "warning"]
+        assert any("user_id" in entry["event"] for entry in warnings)
 
 
 class TestDuplicateSuppression:
