@@ -198,12 +198,12 @@ class TestMeetingUrlNormalizer:
 
         assert result["normalized"]["participants"] == [{"email": "org@example.com", "role": "organizer"}]
 
-    def test_falls_back_to_legacy_users_list(self) -> None:
+    def test_legacy_users_list_shape_yields_empty_participants(self) -> None:
         payload = {"users": [{"email": "cli@example.com", "role": "client"}]}
 
         result = normalize_event_payload(EventType.MEETING_URL_DELETED, payload)
 
-        assert result["normalized"]["participants"] == [{"email": "cli@example.com", "role": "client"}]
+        assert result["normalized"]["participants"] == []
 
 
 class TestUnknownEventType:

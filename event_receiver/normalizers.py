@@ -84,13 +84,10 @@ def _participants_from_users_list(payload: dict[str, Any]) -> list[dict[str, Any
 
 
 def _participants_from_recipient(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract the single recipient from meeting.url_* payloads ({email, recipient_role}).
-
-    Falls back to the legacy 'users' list shape if 'email' is absent.
-    """
+    """Extract the single recipient from meeting.url_* payloads ({email, recipient_role})."""
     email = payload.get("email")
     if not email or not isinstance(email, str):
-        return _participants_from_users_list(payload)
+        return []
     role = payload.get("recipient_role")
     return [{"email": email, "role": role if isinstance(role, str) else None}]
 
