@@ -2,13 +2,28 @@ from logging import getLevelNamesMapping
 
 import structlog
 from event_schemas.queues import ROUTING_RULES
-from pydantic import AmqpDsn, Field, field_validator
+from pydantic import AmqpDsn, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from event_receiver.routing import RouteRule, RoutingConfig
 
 
 logger = structlog.get_logger(__name__)
+
+MIN_SECRET_LENGTH = 16
+
+_SECRET_FIELDS = (
+    "authorization_jwt_verify_key",
+    "email_api_key",
+    "getstream_api_key",
+    "getstream_api_secret",
+    "getstream_user_id_encryption_key",
+    "booking_api_key",
+    "admin_api_key",
+    "event_users_api_token",
+)
+
+_PLACEHOLDER_MARKERS = ("change", "placeholder", "dev-token", "example", "secret-here")
 
 
 def _default_route_rules() -> list[RouteRule]:
@@ -21,6 +36,15 @@ def _default_route_rules() -> list[RouteRule]:
         )
         for rule in ROUTING_RULES
     ]
+
+
+def _is_weak_secret(value: str) -> bool:
+    if len(value) < MIN_SECRET_LENGTH:
+        return True
+    if len(set(value)) == 1:
+        return True
+    lowered = value.lower()
+    return any(marker in lowered for marker in _PLACEHOLDER_MARKERS)
 
 
 class Settings(BaseSettings):
@@ -56,6 +80,19 @@ class Settings(BaseSettings):
 
     event_users_api_url: str = Field(strict=True)
     event_users_api_token: str = Field(strict=True)
+
+    @model_validator(mode="after")
+    def _validate_secret_strength(self) -> Settings:
+        """Reject weak or placeholder secrets outside debug mode (fail fast at startup)."""
+        if self.debug:
+            return self
+        weak = [name for name in _SECRET_FIELDS if _is_weak_secret(getattr(self, name))]
+        if weak:
+            raise ValueError(
+                f"Weak or placeholder secrets are not allowed outside DEBUG "
+                f"(min {MIN_SECRET_LENGTH} chars, no placeholders): {', '.join(weak)}",
+            )
+        return self
 
     @field_validator("log_level", mode="before")
     @classmethod
