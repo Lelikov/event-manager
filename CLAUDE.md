@@ -100,7 +100,7 @@ When adding new dependencies:
 - `POST /event/jitsi` - Jitsi CloudEvents with JWT authorization (signature + claims)
 - `POST /event/unisender-go` - UniSender Go webhooks with MD5 signature validation
 - `POST /event/getstream` - GetStream webhooks with HMAC-SHA256 signature validation (inline, constant-time)
-- `POST /event/admin` - Admin CloudEvents (`user.email.*`, `booking.client_reassigned`) with API key authorization
+- `POST /event/admin` - Admin CloudEvents (`user.email.*`, `booking.client_reassigned`) with `Authorization: Bearer <key>` (constant-time)
 - `GET /health` - Health check
 
 ### Error Handling Pattern

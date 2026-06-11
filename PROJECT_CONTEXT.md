@@ -60,7 +60,7 @@ interface-driven архитектуры:
 
 - `POST /event/admin`
   - принимает CloudEvent от админки (`user.email.*`, `booking.client_reassigned`),
-  - проверяет API key в `Authorization` (`admin_api_key`, constant-time),
+  - проверяет `Authorization: Bearer <key>` (`admin_api_key`, constant-time по токену; запрос без схемы Bearer отклоняется),
   - публикует событие в RabbitMQ.
 
 - `GET /event/*`

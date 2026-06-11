@@ -316,8 +316,9 @@ class IngestController(IIngestController):
         trace_id = extract_trace_id_from_headers(dict(headers))
         logger.info("Started Admin ingest", trace_id=trace_id)
 
-        if not hmac.compare_digest(self._settings.admin_api_key, headers.get("Authorization", "")):
-            logger.warning("Admin ingest failed: invalid API key")
+        token = self._bearer_token(headers)
+        if not hmac.compare_digest(self._settings.admin_api_key, token):
+            logger.warning("Admin ingest failed: missing or invalid Bearer API key")
             raise UnauthorizedError("Invalid Admin API key")
 
         try:
@@ -350,6 +351,19 @@ class IngestController(IIngestController):
         """Verify a GetStream webhook signature: HMAC-SHA256 hex digest of the raw body with the API secret."""
         expected = hmac.new(self._settings.getstream_api_secret.encode(), body, hashlib.sha256).hexdigest()
         return hmac.compare_digest(expected, signature)
+
+    @staticmethod
+    def _bearer_token(headers: Mapping[str, str]) -> str:
+        """Extract the token from ``Authorization: Bearer <token>``.
+
+        Malformed headers (missing, raw key without scheme, wrong scheme) yield ""
+        so the constant-time comparison against the real key always fails.
+        """
+        authorization = headers.get("Authorization", "")
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer":
+            return ""
+        return token.strip()
 
     @staticmethod
     def _parse_json_body(body: bytes) -> dict[str, Any]:

@@ -150,7 +150,9 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 
 **Source**: `routes.py` (`INGEST_ROUTE_TO_METHOD`), controller: `controllers/ingest.py` (`ingest_admin`)
 
-**Authentication**: Static API key in `Authorization` header, compared constant-time against `Settings.admin_api_key`.
+**Authentication**: `Authorization: Bearer <key>` — the token part is compared constant-time against
+`Settings.admin_api_key`. Malformed headers (raw key without scheme, wrong scheme, missing header) are
+rejected with 401. Senders: event-admin `EventPublisherClient`, event-notifier `DeliveryResultPublisher`.
 
 **Request**:
 - Content-Type: CloudEvents binary format (headers + JSON body)

@@ -326,7 +326,7 @@ class TestGetstreamIngest:
 class TestAdminIngest:
     def admin_headers(self, event_type: str = "user.email.change_requested") -> dict[str, str]:
         return {
-            "Authorization": ADMIN_API_KEY,
+            "Authorization": f"Bearer {ADMIN_API_KEY}",
             "ce-specversion": "1.0",
             "ce-id": "evt-admin-1",
             "ce-source": "admin",
@@ -341,10 +341,28 @@ class TestAdminIngest:
         assert publisher.published[0]["booking_id"] == "uid-2"
 
     async def test_invalid_api_key_raises_unauthorized(self, controller, publisher) -> None:
-        headers = self.admin_headers() | {"Authorization": "wrong"}
+        headers = self.admin_headers() | {"Authorization": "Bearer wrong"}
         with pytest.raises(UnauthorizedError):
             await controller.ingest_admin(headers=headers, body=b"{}")
         assert not publisher.published
+
+    async def test_raw_key_without_bearer_scheme_raises_unauthorized(self, controller, publisher) -> None:
+        headers = self.admin_headers() | {"Authorization": ADMIN_API_KEY}
+        with pytest.raises(UnauthorizedError):
+            await controller.ingest_admin(headers=headers, body=b"{}")
+        assert not publisher.published
+
+    async def test_wrong_scheme_raises_unauthorized(self, controller, publisher) -> None:
+        headers = self.admin_headers() | {"Authorization": f"Basic {ADMIN_API_KEY}"}
+        with pytest.raises(UnauthorizedError):
+            await controller.ingest_admin(headers=headers, body=b"{}")
+        assert not publisher.published
+
+    async def test_bearer_scheme_is_case_insensitive(self, controller, publisher) -> None:
+        body = json.dumps({"booking_uid": "uid-2"}).encode()
+        headers = self.admin_headers() | {"Authorization": f"bearer {ADMIN_API_KEY}"}
+        await controller.ingest_admin(headers=headers, body=body)
+        assert len(publisher.published) == 1
 
     async def test_missing_authorization_header_raises_unauthorized(self, controller, publisher) -> None:
         headers = self.admin_headers()
