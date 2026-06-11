@@ -43,6 +43,8 @@ def _participant_entry(user: dict[str, Any]) -> dict[str, Any]:
     entry: dict[str, Any] = {"email": user["email"], "role": "client" if role == "guest" else role}
     if user.get("time_zone"):
         entry["time_zone"] = user["time_zone"]
+    if user.get("locale"):
+        entry["locale"] = user["locale"]
     return entry
 
 

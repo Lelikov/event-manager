@@ -43,6 +43,7 @@ def created_payload(**overrides: Any) -> dict[str, Any]:
                 "email": "chied.bread@gmail.com",
                 "name": "Александр",
                 "timeZone": "Europe/Madrid",
+                "language": {"locale": "ru"},
                 "utcOffset": 120,
             },
         ],
@@ -105,6 +106,24 @@ class TestCalcomBookingCreated:
         assert data["start_time"] == "2026-05-12T22:05:00Z"
         assert data["end_time"] == "2026-05-12T22:10:00Z"
 
+    async def test_language_locale_is_carried_into_users(self, controller, publisher) -> None:
+        """Real cal.com payloads (requests.jsonl) carry language.locale per organizer/attendee."""
+        body = calcom_body("BOOKING_CREATED", created_payload())
+        await controller.ingest_calcom(headers=calcom_headers(body), body=body)
+        users = publisher.published[0]["data"]["users"]
+        by_email = {user["email"]: user for user in users}
+        assert by_email["lelikovas@gmail.com"]["locale"] == "ru"
+        assert by_email["chied.bread@gmail.com"]["locale"] == "ru"
+
+    async def test_missing_language_locale_is_omitted(self, controller, publisher) -> None:
+        payload = created_payload()
+        del payload["organizer"]["language"]
+        payload["attendees"][0]["language"] = {}
+        body = calcom_body("BOOKING_CREATED", payload)
+        await controller.ingest_calcom(headers=calcom_headers(body), body=body)
+        users = publisher.published[0]["data"]["users"]
+        assert all("locale" not in user for user in users)
+
     async def test_guests_become_client_participants(self, controller, publisher) -> None:
         payload = created_payload()
         payload["responses"]["guests"]["value"] = ["guest@example.com"]
@@ -142,7 +161,12 @@ class TestCalcomBookingCancelled:
         data = published["data"]
         assert data["cancellation_reason"] == "Причина отмены"
         assert data["cancelled_by"] == "lelikovas@gmail.com"
-        assert {"email": "lelikovas@gmail.com", "role": "organizer", "time_zone": "Europe/Madrid"} in data["users"]
+        assert {
+            "email": "lelikovas@gmail.com",
+            "role": "organizer",
+            "time_zone": "Europe/Madrid",
+            "locale": "ru",
+        } in data["users"]
 
 
 class TestCalcomBookingRescheduled:

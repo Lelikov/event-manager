@@ -18,7 +18,7 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 - Body (JSON):
   - `booking_uid` (str, **required**): Booking identifier, extracted from a copy of the payload before publish
   - For `booking.created` type, body must contain:
-    - `users` (list): Array of `{role: "organizer"|"client"|"guest", email: str, time_zone?: str}` objects.
+    - `users` (list): Array of `{role: "organizer"|"client"|"guest", email: str, time_zone?: str, locale?: str}` objects.
       Exactly one organizer is required plus at least one client/guest; ALL clients/guests are preserved
       (guests are normalized to role `client`) and emitted into `normalized.participants`
     - `start_time` (str): Booking start time
@@ -221,7 +221,13 @@ All messages have a normalized body structure (`normalizers.py:26-50`):
   "original": { /* raw payload as received */ },
   "normalized": {
     "participants": [
-      {"email": "user@example.com", "role": "organizer", "user_id": "uuid-from-event-users"}
+      {
+        "email": "user@example.com",
+        "role": "organizer",
+        "time_zone": "Europe/Madrid",
+        "locale": "ru",
+        "user_id": "uuid-from-event-users"
+      }
     ]
   }
 }

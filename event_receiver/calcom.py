@@ -141,7 +141,21 @@ def _participant(entry: dict[str, Any], *, role: str) -> dict[str, Any]:
     time_zone = entry.get("timeZone")
     if isinstance(time_zone, str) and time_zone:
         participant["time_zone"] = time_zone
+    locale = _locale(entry)
+    if locale:
+        participant["locale"] = locale
     return participant
+
+
+def _locale(entry: dict[str, Any]) -> str | None:
+    """cal.com organizer/attendee entries carry the preferred language as ``language.locale``."""
+    language = entry.get("language")
+    if not isinstance(language, dict):
+        return None
+    locale = language.get("locale")
+    if isinstance(locale, str) and locale:
+        return locale
+    return None
 
 
 def _guest_emails(payload: dict[str, Any]) -> list[str]:

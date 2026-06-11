@@ -24,13 +24,17 @@
 | start_time       | `datetime`       |
 | end_time         | `datetime`       |
 
-`UserInfo`: `{ email: str, role: "organizer" | "client" | "guest", time_zone?: str }`
+`UserInfo`: `{ email: str, role: "organizer" | "client" | "guest", time_zone?: str, locale?: str }`
 
 Входящий payload содержит `users` — ровно один `organizer` и ≥1 `client`/`guest`
 (multi-attendee/seated бронирования поддерживаются; `guest` нормализуется в `client`).
 `IngestController._transform_booking_created_payload()` строит `user`/`client`
 (первичная пара) для валидации `BookingCreatedPayload` и сохраняет полный список
 в `users[]` — все участники попадают в `normalized.participants`.
+
+Для webhook'ов cal.com (`POST /event/calcom`) `locale` берётся из `organizer.language.locale` /
+`attendees[].language.locale` и сохраняется в `users[].locale` → `normalized.participants[].locale`
+(используется event-notifier для выбора языка шаблона).
 
 ## calcom.* (неизвестные триггеры cal.com)
 

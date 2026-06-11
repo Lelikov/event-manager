@@ -77,7 +77,7 @@ def _extract_participants(
 def _participants_from_users_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract participants from a generic 'users' list in the payload."""
     return [
-        {k: v for k, v in user.items() if k in ("email", "role", "time_zone") and v is not None}
+        {k: v for k, v in user.items() if k in ("email", "role", "time_zone", "locale") and v is not None}
         for user in payload.get("users", [])
         if user.get("email")
     ]
@@ -95,7 +95,13 @@ def _participants_from_recipient(payload: dict[str, Any]) -> list[dict[str, Any]
 def _participants_from_notification_command(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract participants from notification.send_requested recipients ({email, role})."""
     validated = NotificationCommandPayload(**payload)
-    return [{"email": recipient.email, "role": recipient.role.value} for recipient in validated.recipients]
+    participants: list[dict[str, Any]] = []
+    for recipient in validated.recipients:
+        participant: dict[str, Any] = {"email": recipient.email, "role": recipient.role.value}
+        if recipient.locale:
+            participant["locale"] = recipient.locale
+        participants.append(participant)
+    return participants
 
 
 def _participants_from_booking_rejected(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -141,6 +147,8 @@ def _booking_created_participants_from_users(
         participant: dict[str, Any] = {"email": user["email"], "role": role}
         if user.get("time_zone"):
             participant["time_zone"] = user["time_zone"]
+        if user.get("locale"):
+            participant["locale"] = user["locale"]
         if role == "organizer" and validated.volunteer_id and user["email"] == validated.user.email:
             participant["user_id"] = validated.volunteer_id
         if role == "client" and validated.client_id and user["email"] == validated.client.email:
