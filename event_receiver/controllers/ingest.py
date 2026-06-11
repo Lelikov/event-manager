@@ -11,7 +11,6 @@ from cloudevents.v1.pydantic.v2.conversion import from_http
 from event_schemas.booking import BookingCreatedPayload
 from event_schemas.types import EventType
 from pydantic import ValidationError
-from stream_chat import StreamChat
 
 from event_receiver.errors import BadRequestError, ConfigurationError, UnauthorizedError
 from event_receiver.interfaces.ingest import IIngestController
@@ -223,11 +222,10 @@ class IngestController(IIngestController):
         trace_id = extract_trace_id_from_headers(dict(headers))
 
         logger.info("Started Getstream ingest", trace_id=trace_id)
-        client = StreamChat(api_key=self._settings.getstream_api_key, api_secret=self._settings.getstream_api_secret)
         signature = headers.get("X-SIGNATURE")
         if signature is None:
             raise UnauthorizedError("Missing X-SIGNATURE header")
-        if not client.verify_webhook(body, signature):
+        if not self._is_valid_getstream_signature(body=body, signature=signature):
             logger.warning("Getstream webhook failed: invalid signature")
             raise UnauthorizedError("Invalid Getstream webhook signature")
         data = self._parse_json_body(body)
@@ -273,6 +271,11 @@ class IngestController(IIngestController):
             event_id=incoming.id,
             trace_id=trace_id,
         )
+
+    def _is_valid_getstream_signature(self, *, body: bytes, signature: str) -> bool:
+        """Verify a GetStream webhook signature: HMAC-SHA256 hex digest of the raw body with the API secret."""
+        expected = hmac.new(self._settings.getstream_api_secret.encode(), body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
 
     @staticmethod
     def _parse_json_body(body: bytes) -> dict[str, Any]:
