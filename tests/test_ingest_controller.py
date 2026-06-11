@@ -185,6 +185,29 @@ class TestBookingIngest:
             await controller.ingest_booking(headers=headers, body=booking_created_body())
         assert not publisher.published
 
+    async def test_missing_email_raises_bad_request_not_keyerror(self, controller) -> None:
+        body = booking_created_body(
+            users=[{"role": "organizer"}, {"role": "client", "email": "client@example.com"}],
+        )
+        with pytest.raises(BadRequestError, match="missing required field"):
+            await controller.ingest_booking(headers=booking_cloudevent_headers(), body=body)
+
+    async def test_missing_start_time_raises_bad_request_not_keyerror(self, controller) -> None:
+        payload = json.loads(booking_created_body())
+        del payload["start_time"]
+        with pytest.raises(BadRequestError, match="missing required field"):
+            await controller.ingest_booking(headers=booking_cloudevent_headers(), body=json.dumps(payload).encode())
+
+    async def test_non_dict_users_entries_raise_bad_request(self, controller) -> None:
+        body = booking_created_body(users=["not-a-dict"])
+        with pytest.raises(BadRequestError, match="users list"):
+            await controller.ingest_booking(headers=booking_cloudevent_headers(), body=body)
+
+    async def test_invalid_schema_raises_bad_request(self, controller) -> None:
+        body = booking_created_body(start_time="not-a-datetime")
+        with pytest.raises(BadRequestError, match="Invalid booking payload schema"):
+            await controller.ingest_booking(headers=booking_cloudevent_headers(), body=body)
+
 
 class TestAdminIngest:
     def admin_headers(self, event_type: str = "user.email.change_requested") -> dict[str, str]:

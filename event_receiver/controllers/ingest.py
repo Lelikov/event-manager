@@ -113,24 +113,25 @@ class IngestController(IIngestController):
             trace_id=trace_id,
         )
 
+        if not isinstance(incoming.data, dict):
+            raise BadRequestError("Event data must be a JSON object")
         data = dict(incoming.data)
         booking_uid = data.pop("booking_uid", None)
         if not booking_uid:
             raise BadRequestError("Missing booking_uid in payload")
 
+        payload_dict = data
         if incoming.type == EventType.BOOKING_CREATED:
             payload_dict = self._transform_booking_created_payload(data)
             try:
                 BookingCreatedPayload(**payload_dict)
             except ValidationError as exc:
-                logger.exception(
+                logger.warning(
                     "Booking schema validation failed",
                     event_type=incoming.type,
                     validation_errors=exc.errors(),
                 )
                 raise BadRequestError(f"Invalid booking payload schema: {exc}") from exc
-        else:
-            payload_dict = data
 
         await self._publisher.publish(
             source=incoming.source,
@@ -154,16 +155,21 @@ class IngestController(IIngestController):
     def _transform_booking_created_payload(data: dict[str, Any]) -> dict[str, Any]:
         """Transform users list from booking.created into user/client structure expected by BookingCreatedPayload."""
         users = data.get("users", [])
+        if not isinstance(users, list) or not all(isinstance(user, dict) for user in users):
+            raise BadRequestError("booking.created requires a users list of objects")
         organizer = next((u for u in users if u.get("role") == "organizer"), None)
         client = next((u for u in users if u.get("role") == "client"), None)
         if not organizer or not client:
             raise BadRequestError("booking.created requires organizer and client in users")
-        result: dict[str, Any] = {
-            "user": {"email": organizer["email"]},
-            "client": {"email": client["email"]},
-            "start_time": data["start_time"],
-            "end_time": data["end_time"],
-        }
+        try:
+            result: dict[str, Any] = {
+                "user": {"email": organizer["email"]},
+                "client": {"email": client["email"]},
+                "start_time": data["start_time"],
+                "end_time": data["end_time"],
+            }
+        except KeyError as exc:
+            raise BadRequestError(f"booking.created payload missing required field: {exc}") from exc
         if data.get("volunteer_id"):
             result["volunteer_id"] = data["volunteer_id"]
         if data.get("client_id"):
