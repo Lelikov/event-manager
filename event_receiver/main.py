@@ -3,7 +3,7 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
-from logging import getLevelNamesMapping
+from logging import INFO, getLevelNamesMapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -64,7 +64,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
     application.state.dishka_container = container
 
     settings = await container.get(Settings)
-    log_level = getLevelNamesMapping().get(settings.log_level)
+    log_level = getLevelNamesMapping().get(settings.log_level, INFO)
     setup_logger(log_level=log_level, console_render=settings.debug)
 
     logger.info(

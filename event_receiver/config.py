@@ -1,12 +1,18 @@
+from logging import getLevelNamesMapping
+
+import structlog
 from event_schemas.queues import ROUTING_RULES
-from pydantic import AmqpDsn, Field
+from pydantic import AmqpDsn, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from event_receiver.routing import RouteRule, RoutingConfig
 
 
+logger = structlog.get_logger(__name__)
+
+
 def _default_route_rules() -> list[RouteRule]:
-    """Default routing rules generated from the canonical event_schemas table."""
+    """Build default routing rules from the canonical event_schemas table."""
     return [
         RouteRule(
             destination=str(rule.destination),
@@ -49,6 +55,15 @@ class Settings(BaseSettings):
 
     event_users_api_url: str = Field(strict=True)
     event_users_api_token: str = Field(strict=True)
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _normalize_log_level(cls, value: object) -> str:
+        normalized = str(value).strip().upper()
+        if normalized in getLevelNamesMapping():
+            return normalized
+        logger.warning("Unknown LOG_LEVEL value, defaulting to INFO", log_level=value)
+        return "INFO"
 
     @property
     def routing_destinations(self) -> set[str]:
