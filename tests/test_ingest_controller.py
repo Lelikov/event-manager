@@ -209,6 +209,87 @@ class TestBookingIngest:
             await controller.ingest_booking(headers=booking_cloudevent_headers(), body=body)
 
 
+class TestJitsiIngest:
+    def jitsi_headers(self) -> dict[str, str]:
+        return {
+            "Authorization": "Bearer some-jitsi-token",
+            "ce-specversion": "1.0",
+            "ce-id": "evt-jitsi-1",
+            "ce-source": "jitsi",
+            "ce-type": "jitsi.conference.joined",
+            "Content-Type": "application/json",
+        }
+
+    async def test_happy_path_publishes_with_room_as_booking_id(self, controller, publisher) -> None:
+        body = json.dumps({"context": {"user": {"email": "p@example.com", "role": "client"}}}).encode()
+        await controller.ingest_jitsi(headers=self.jitsi_headers(), body=body)
+        assert len(publisher.published) == 1
+        assert publisher.published[0]["booking_id"] == "room-1"
+
+    async def test_missing_authorization_raises_unauthorized(self, controller, publisher) -> None:
+        headers = self.jitsi_headers()
+        del headers["Authorization"]
+        with pytest.raises(UnauthorizedError):
+            await controller.ingest_jitsi(headers=headers, body=b"{}")
+        assert not publisher.published
+
+    async def test_non_object_data_raises_bad_request_not_typeerror(self, controller, publisher) -> None:
+        body = json.dumps(["not", "an", "object"]).encode()
+        with pytest.raises(BadRequestError, match="JSON object"):
+            await controller.ingest_jitsi(headers=self.jitsi_headers(), body=body)
+        assert not publisher.published
+
+
+class TestUnisenderIngest:
+    async def test_happy_path_publishes_each_event(self, controller, publisher) -> None:
+        await controller.ingest_unisender_go(headers={}, body=unisender_body())
+        assert len(publisher.published) == 1
+        assert publisher.published[0]["booking_id"] == "uid-1"
+        assert publisher.published[0]["source"] == "unisender-go"
+
+    async def test_invalid_signature_raises_unauthorized(self, controller, publisher) -> None:
+        body = unisender_body().replace(b'"auth": "', b'"auth": "0')
+        with pytest.raises(UnauthorizedError):
+            await controller.ingest_unisender_go(headers={}, body=body)
+        assert not publisher.published
+
+    async def test_empty_body_raises_bad_request(self, controller) -> None:
+        with pytest.raises(BadRequestError, match="Empty request body"):
+            await controller.ingest_unisender_go(headers={}, body=b"")
+
+    async def test_signed_non_json_body_raises_bad_request_not_valueerror(self, controller) -> None:
+        body_text = '"auth": "PLACEHOLDER" this is not json'
+        with_key = body_text.replace("PLACEHOLDER", EMAIL_API_KEY)
+        signature = hashlib.md5(with_key.encode()).hexdigest()  # noqa: S324
+        body = body_text.replace("PLACEHOLDER", signature).encode()
+        with pytest.raises(BadRequestError, match="not valid JSON"):
+            await controller.ingest_unisender_go(headers={}, body=body)
+
+
+class TestGetstreamIngest:
+    async def test_happy_path_publishes_with_channel_id_as_booking_id(self, controller, publisher) -> None:
+        body = json.dumps({"type": "message.new", "channel_id": "uid-9"}).encode()
+        await controller.ingest_getstream(headers=getstream_headers(body), body=body)
+        assert len(publisher.published) == 1
+        assert publisher.published[0]["event_type"] == "getstream.message.new"
+        assert publisher.published[0]["booking_id"] == "uid-9"
+
+    async def test_missing_signature_raises_unauthorized(self, controller, publisher) -> None:
+        with pytest.raises(UnauthorizedError, match="Missing X-SIGNATURE"):
+            await controller.ingest_getstream(headers={}, body=b"{}")
+        assert not publisher.published
+
+    async def test_invalid_signature_raises_unauthorized(self, controller, publisher) -> None:
+        with pytest.raises(UnauthorizedError, match="Invalid Getstream"):
+            await controller.ingest_getstream(headers={"X-SIGNATURE": "deadbeef"}, body=b"{}")
+        assert not publisher.published
+
+    async def test_non_json_body_raises_bad_request_not_valueerror(self, controller) -> None:
+        body = b"not json"
+        with pytest.raises(BadRequestError, match="not valid JSON"):
+            await controller.ingest_getstream(headers=getstream_headers(body), body=body)
+
+
 class TestAdminIngest:
     def admin_headers(self, event_type: str = "user.email.change_requested") -> dict[str, str]:
         return {

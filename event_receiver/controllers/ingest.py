@@ -73,6 +73,9 @@ class IngestController(IIngestController):
         )
         logger.debug("JWT claims verified and filtered", claims_count=len(claims), trace_id=trace_id)
 
+        if not isinstance(incoming.data, dict):
+            raise BadRequestError("Event data must be a JSON object")
+
         await self._publisher.publish(
             source=incoming.source,
             event_type=incoming.type,
@@ -198,7 +201,7 @@ class IngestController(IIngestController):
             logger.warning("UniSender Go ingest failed: invalid auth signature")
             raise UnauthorizedError("Invalid UniSender Go auth signature")
 
-        for event_by_user in ujson.loads(body).get("events_by_user", []):
+        for event_by_user in self._parse_json_body(body).get("events_by_user", []):
             for event in event_by_user.get("events", []):
                 event_data = dict(event.get("event_data", {}))
                 metadata = dict(event_data.get("metadata", {}))
@@ -227,7 +230,7 @@ class IngestController(IIngestController):
         if not client.verify_webhook(body, signature):
             logger.warning("Getstream webhook failed: invalid signature")
             raise UnauthorizedError("Invalid Getstream webhook signature")
-        data = ujson.loads(body)
+        data = self._parse_json_body(body)
         await self._publisher.publish(
             source="getstream",
             event_type=f"getstream.{data.get('type', 'unknown')}",
@@ -251,7 +254,7 @@ class IngestController(IIngestController):
             logger.warning("Admin event parsing failed")
             raise BadRequestError("Invalid Admin event payload or headers") from exc
 
-        data = dict(incoming.data) if incoming.data else {}
+        data = dict(incoming.data) if isinstance(incoming.data, dict) else {}
         booking_id = data.get("booking_uid") or None
 
         await self._publisher.publish(
@@ -270,6 +273,17 @@ class IngestController(IIngestController):
             event_id=incoming.id,
             trace_id=trace_id,
         )
+
+    @staticmethod
+    def _parse_json_body(body: bytes) -> dict[str, Any]:
+        """Parse a raw request body as a JSON object, mapping parse failures to 400."""
+        try:
+            data = ujson.loads(body)
+        except ValueError as exc:
+            raise BadRequestError("Request body is not valid JSON") from exc
+        if not isinstance(data, dict):
+            raise BadRequestError("Request body must be a JSON object")
+        return data
 
     @staticmethod
     def _replace_auth_with_api_key(*, body: str, api_key: str) -> str:
