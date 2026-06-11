@@ -286,7 +286,7 @@ sequenceDiagram
     Normalizer-->>Publisher: {original, normalized: {participants}}
     loop For each participant
         Publisher->>UserResolver: resolve_or_create(email, role)
-        UserResolver->>EventUsers: GET /api/users/roles/{role}/emails/{email}
+        UserResolver->>EventUsers: GET /api/users/by-identity?email=&role=
         EventUsers-->>UserResolver: user_id (or 404)
         opt User not found
             UserResolver->>EventUsers: POST /api/users {email, role}

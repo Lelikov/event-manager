@@ -31,7 +31,7 @@ The `event-receiver` service is the HTTP ingress gateway for the event-driven sy
 | Dependency | Type | Purpose |
 |---|---|---|
 | RabbitMQ | Message broker | Publish CloudEvents to topic exchange |
-| event-users | HTTP service | Resolve participant emails to user UUIDs (`/api/users/roles/{role}/emails/{email}`, `/api/users`) |
+| event-users | HTTP service | Resolve participant emails to user UUIDs (`/api/users/by-identity`, `/api/users`) |
 | event-schemas | Python library | Shared Pydantic models for event payloads, EventType enum, priorities, schema versions |
 
 ## Key Configuration

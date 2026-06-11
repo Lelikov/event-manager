@@ -43,7 +43,8 @@ class UserResolver(IUserResolver):
 
     async def _get_user(self, *, email: str, role: str) -> str | None:
         response = await self._client.get(
-            f"/api/users/roles/{role}/emails/{email}",
+            "/api/users/by-identity",
+            params={"email": email, "role": role},
             headers=self._headers,
         )
         if response.status_code == HTTPStatus.NOT_FOUND:

@@ -26,7 +26,7 @@
 | Authentication | Bearer token via `Settings.event_users_api_token` |
 | Timeout | 10 seconds per request (`ioc.py:93`) |
 | Retry policy | `tenacity` retry with exponential backoff, up to 3 attempts on `httpx.HTTPStatusError` or `httpx.TimeoutException` |
-| Endpoints called | `GET /api/users/roles/{role}/emails/{email}` (lookup), `POST /api/users` (create) |
+| Endpoints called | `GET /api/users/by-identity?email=&role=` (lookup), `POST /api/users` (create) |
 | Call frequency | Once per participant per event (can be 1-2 calls per event typically) |
 | Source | `adapters/users_client.py:17-49` |
 
