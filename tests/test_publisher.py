@@ -103,6 +103,44 @@ class TestPublish:
         assert data["normalized"]["participants"][0]["user_id"] == "uuid-1"
 
 
+class TestDuplicateSuppression:
+    async def test_same_idempotency_key_published_once(self) -> None:
+        broker = FakeBroker()
+        publisher = make_publisher(broker)
+        for _ in range(3):
+            await publisher.publish(
+                source="booking",
+                event_type="booking.cancelled",
+                booking_id="uid-1",
+                data={"users": [], "cancellation_reason": "x"},
+            )
+        assert len(broker.published) == 1
+
+    async def test_different_payloads_are_not_suppressed(self) -> None:
+        broker = FakeBroker()
+        publisher = make_publisher(broker)
+        await publisher.publish(source="booking", event_type="booking.cancelled", booking_id="u1", data={"a": 1})
+        await publisher.publish(source="booking", event_type="booking.cancelled", booking_id="u1", data={"a": 2})
+        assert len(broker.published) == 2
+
+    async def test_expired_cache_entry_allows_republish(self) -> None:
+        broker = FakeBroker()
+        publisher = make_publisher(broker)
+        publisher._idempotency_cache_ttl = 0.0  # noqa: SLF001
+        await publisher.publish(source="booking", event_type="booking.cancelled", booking_id="u1", data={"a": 1})
+        await publisher.publish(source="booking", event_type="booking.cancelled", booking_id="u1", data={"a": 1})
+        assert len(broker.published) == 2
+
+    async def test_failed_publish_is_not_remembered(self) -> None:
+        broker = FakeBroker(error=TimeoutError())
+        publisher = make_publisher(broker)
+        with pytest.raises(PublishUnavailableError):
+            await publisher.publish(source="booking", event_type="booking.cancelled", booking_id="u1", data={"a": 1})
+        broker._error = None  # noqa: SLF001
+        await publisher.publish(source="booking", event_type="booking.cancelled", booking_id="u1", data={"a": 1})
+        assert len(broker.published) == 1
+
+
 class TestTopologyValidation:
     def make_manager(self, required: frozenset[str]) -> RabbitTopologyManager:
         return RabbitTopologyManager(

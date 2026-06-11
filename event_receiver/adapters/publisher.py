@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _PUBLISHED_EVENTS_LOG_FILE = Path("published_events.jsonl")
+_IDEMPOTENCY_CACHE_MAX_ENTRIES = 10_000
 
 
 def _coerce_event_type(event_type: str) -> EventType | None:
@@ -56,6 +57,7 @@ class CloudEventPublisher(ICloudEventPublisher):
         user_resolver: IUserResolver,
         getstream_decoder: Callable[[str], str] | None = None,
         publish_timeout: float = 10.0,
+        idempotency_cache_ttl: float = 600.0,
         debug: bool = False,
     ) -> None:
         self._broker = broker
@@ -64,6 +66,8 @@ class CloudEventPublisher(ICloudEventPublisher):
         self._user_resolver = user_resolver
         self._getstream_decoder = getstream_decoder
         self._publish_timeout = publish_timeout
+        self._idempotency_cache_ttl = idempotency_cache_ttl
+        self._idempotency_cache: dict[str, float] = {}
         self._debug = debug
 
     async def publish(
@@ -113,6 +117,19 @@ class CloudEventPublisher(ICloudEventPublisher):
             data=data,
         )
 
+        # Short-TTL duplicate suppression for webhook retries. The authoritative
+        # dedup is event-saver's DB constraint (booking_id, event_type, source, payload digest);
+        # this cache only avoids republishing obvious retries (e.g. caller timed out before 202).
+        if self._is_recent_duplicate(idempotency_key):
+            logger.info(
+                "Duplicate event suppressed by idempotency cache",
+                source=source,
+                event_type=event_type_str,
+                booking_id=booking_id,
+                idempotency_key=idempotency_key,
+            )
+            return
+
         # Get schema version and priority
         schema_version = EVENT_SCHEMA_VERSIONS.get(event_type_enum, "v1")
         priority = EVENT_PRIORITIES.get(event_type_enum, EventPriority.NORMAL)
@@ -124,15 +141,7 @@ class CloudEventPublisher(ICloudEventPublisher):
             getstream_decoder=self._getstream_decoder,
         )
 
-        # Enrich each participant with their user_id from event-users (skip if already resolved)
-        for participant in normalized_data["normalized"]["participants"]:
-            if not participant.get("user_id"):
-                user_id = await self._user_resolver.resolve_or_create(
-                    email=participant["email"],
-                    role=participant.get("role"),
-                )
-                if user_id:
-                    participant["user_id"] = user_id
+        await self._enrich_participants(normalized_data["normalized"]["participants"])
 
         # Build CloudEvent attributes with extensions
         attributes = {
@@ -168,6 +177,7 @@ class CloudEventPublisher(ICloudEventPublisher):
             event_type_str=event_type_str,
             priority=priority,
         )
+        self._remember_idempotency_key(idempotency_key)
         if self._debug:
             record = {
                 "ts": time.time(),
@@ -194,6 +204,35 @@ class CloudEventPublisher(ICloudEventPublisher):
             idempotency_key=idempotency_key,
             priority=priority.value,
         )
+
+    async def _enrich_participants(self, participants: list[dict[str, Any]]) -> None:
+        """Enrich each participant with their user_id from event-users (skip if already resolved)."""
+        for participant in participants:
+            if not participant.get("user_id"):
+                user_id = await self._user_resolver.resolve_or_create(
+                    email=participant["email"],
+                    role=participant.get("role"),
+                )
+                if user_id:
+                    participant["user_id"] = user_id
+
+    def _is_recent_duplicate(self, idempotency_key: str) -> bool:
+        seen_at = self._idempotency_cache.get(idempotency_key)
+        if seen_at is None:
+            return False
+        return time.monotonic() - seen_at < self._idempotency_cache_ttl
+
+    def _remember_idempotency_key(self, idempotency_key: str) -> None:
+        now = time.monotonic()
+        if len(self._idempotency_cache) >= _IDEMPOTENCY_CACHE_MAX_ENTRIES:
+            self._idempotency_cache = {
+                key: seen_at
+                for key, seen_at in self._idempotency_cache.items()
+                if now - seen_at < self._idempotency_cache_ttl
+            }
+        if len(self._idempotency_cache) >= _IDEMPOTENCY_CACHE_MAX_ENTRIES:
+            self._idempotency_cache.clear()
+        self._idempotency_cache[idempotency_key] = now
 
     async def _publish_to_broker(
         self,
