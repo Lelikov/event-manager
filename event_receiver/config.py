@@ -20,6 +20,7 @@ _SECRET_FIELDS = (
     "getstream_user_id_encryption_key",
     "booking_api_key",
     "admin_api_key",
+    "calcom_webhook_secret",
     "event_users_api_token",
 )
 
@@ -78,6 +79,7 @@ class Settings(BaseSettings):
 
     booking_api_key: str = Field(strict=True)
     admin_api_key: str = Field(strict=True)
+    calcom_webhook_secret: str = Field(strict=True)
 
     event_users_api_url: str = Field(strict=True)
     event_users_api_token: str = Field(strict=True)

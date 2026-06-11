@@ -12,6 +12,7 @@ from event_schemas.booking import BookingCreatedPayload
 from event_schemas.types import EventType
 from pydantic import ValidationError
 
+from event_receiver.calcom import CALCOM_SIGNATURE_HEADER, transform_calcom_webhook
 from event_receiver.errors import BadRequestError, ConfigurationError, UnauthorizedError
 from event_receiver.interfaces.ingest import IIngestController
 from event_receiver.utils import extract_trace_id_from_headers
@@ -141,16 +142,7 @@ class IngestController(IIngestController):
 
         payload_dict = data
         if incoming.type == EventType.BOOKING_CREATED:
-            payload_dict = self._transform_booking_created_payload(data)
-            try:
-                BookingCreatedPayload(**payload_dict)
-            except ValidationError as exc:
-                logger.warning(
-                    "Booking schema validation failed",
-                    event_type=incoming.type,
-                    validation_errors=exc.errors(),
-                )
-                raise BadRequestError(f"Invalid booking payload schema: {exc}") from exc
+            payload_dict = self._validated_booking_created(data)
 
         await self._publisher.publish(
             source=incoming.source,
@@ -169,6 +161,59 @@ class IngestController(IIngestController):
             booking_id=booking_uid,
             trace_id=trace_id,
         )
+
+    def _validated_booking_created(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Transform a users-list booking.created payload and validate it against the canonical model."""
+        payload_dict = self._transform_booking_created_payload(data)
+        try:
+            BookingCreatedPayload(**payload_dict)
+        except ValidationError as exc:
+            logger.warning(
+                "Booking schema validation failed",
+                validation_errors=exc.errors(),
+            )
+            raise BadRequestError(f"Invalid booking payload schema: {exc}") from exc
+        return payload_dict
+
+    async def ingest_calcom(self, *, headers: Mapping[str, str], body: bytes) -> None:
+        trace_id = extract_trace_id_from_headers(dict(headers))
+        logger.info("Started cal.com ingest", trace_id=trace_id)
+
+        signature = headers.get(CALCOM_SIGNATURE_HEADER) or headers.get("X-Cal-Signature-256")
+        if signature is None:
+            raise UnauthorizedError("Missing X-Cal-Signature-256 header")
+        if not self._is_valid_calcom_signature(body=body, signature=signature):
+            logger.warning("cal.com webhook failed: invalid signature")
+            raise UnauthorizedError("Invalid cal.com webhook signature")
+
+        webhook = self._parse_json_body(body)
+        event = transform_calcom_webhook(webhook)
+
+        data = event.data
+        if event.event_type == EventType.BOOKING_CREATED:
+            data = self._validated_booking_created(data)
+
+        created_at = webhook.get("createdAt")
+        await self._publisher.publish(
+            source=event.source,
+            event_type=event.event_type,
+            event_time=created_at if isinstance(created_at, str) else None,
+            booking_id=event.booking_uid,
+            data=data,
+            trace_id=trace_id,
+        )
+        logger.info(
+            "cal.com ingest completed",
+            trigger_event=webhook.get("triggerEvent"),
+            event_type=str(event.event_type),
+            booking_id=event.booking_uid,
+            trace_id=trace_id,
+        )
+
+    def _is_valid_calcom_signature(self, *, body: bytes, signature: str) -> bool:
+        """Verify a cal.com webhook signature: HMAC-SHA256 hex digest of the raw body with the webhook secret."""
+        expected = hmac.new(self._settings.calcom_webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
 
     @staticmethod
     def _transform_booking_created_payload(data: dict[str, Any]) -> dict[str, Any]:

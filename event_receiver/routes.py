@@ -20,6 +20,7 @@ logger = structlog.get_logger(__name__)
 
 INGEST_ROUTE_TO_METHOD = {
     "/event/booking": "ingest_booking",
+    "/event/calcom": "ingest_calcom",
     "/event/getstream": "ingest_getstream",
     "/event/jitsi": "ingest_jitsi",
     "/event/unisender-go": "ingest_unisender_go",
