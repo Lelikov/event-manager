@@ -1,5 +1,3 @@
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,16 +39,10 @@ class AuthorizationJWTVerifier(IAuthorizationJWTVerifier):
             raise UnauthorizedError("Invalid JWT signature") from exc
         return claims
 
-    @staticmethod
-    def _payload_digest(payload: dict[str, Any]) -> str:
-        canonical_json = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-        return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
-
     def verify(
         self,
         *,
-        token: str | None = None,
-        claims: dict[str, Any] | None = None,
+        claims: dict[str, Any],
         event_source: str,
         event_type: str,
     ) -> dict[str, Any]:
@@ -59,21 +51,6 @@ class AuthorizationJWTVerifier(IAuthorizationJWTVerifier):
             event_source=event_source,
             event_type=event_type,
         )
-        if claims is None:
-            if token is None:
-                raise UnauthorizedError("Missing authorization token")
-            claims = jwt.decode(
-                token,
-                options={
-                    "verify_signature": False,
-                    "verify_exp": True,
-                    "verify_iat": True,
-                    "verify_nbf": True,
-                    "verify_aud": False,
-                    "verify_iss": False,
-                },
-            )
-
         source = claims.get("source")
         _type = claims.get("type")
         if source and source != event_source:

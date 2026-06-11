@@ -2,7 +2,6 @@ import fnmatch
 from dataclasses import dataclass
 
 import structlog
-from cloudevents.v1.pydantic.v2.event import CloudEvent
 from pydantic import BaseModel, Field
 
 
@@ -32,12 +31,6 @@ class EventRouter:
             "EventRouter initialized",
             default_destination=self._default_destination,
             rules_count=len(self._rules),
-        )
-
-    def resolve_routing_key(self, event: CloudEvent) -> str:
-        return self.resolve_routing_key_by_fields(
-            source=str(event.source),
-            event_type=event.type,
         )
 
     def resolve_routing_key_by_fields(self, source: str, event_type: str) -> str:

@@ -26,7 +26,7 @@
 | Authentication | Bearer token via `Settings.event_users_api_token` |
 | Timeout | 10 seconds per request (`ioc.py:93`) |
 | Retry policy | `tenacity` retry with exponential backoff, up to 3 attempts on `httpx.HTTPStatusError` or `httpx.TimeoutException` |
-| Endpoints called | `GET /api/users/roles/{role}/emails/{email}` (lookup), `POST /api/users` (create) |
+| Endpoints called | `GET /api/users/by-identity?email=&role=` (lookup), `POST /api/users` (create) |
 | Call frequency | Once per participant per event (can be 1-2 calls per event typically) |
 | Source | `adapters/users_client.py:17-49` |
 
@@ -34,6 +34,8 @@
 - Calls are retried up to 3 times with exponential backoff
 - After retries are exhausted, `UserResolver` falls back gracefully to `user_id=None`
 - Event is still published to RabbitMQ; participant entries will have `user_id=null`
+- The publisher emits a structured WARNING (`unresolved_emails`, `unresolved_count`) for every
+  publish with unresolved user_ids — alert on it; no automatic backfill exists downstream
 - Webhook caller receives `202 Accepted` (event-users failure is no longer in the critical path)
 
 ---
@@ -84,9 +86,14 @@ Source: `adapters/publisher.py:93-123`
 | Source | Provided response | Contract |
 |---|---|---|
 | Booking service | `202 Accepted` on success | Must respond within reasonable timeout |
+| cal.com | `202 Accepted` on success; `503` on broker failure (cal.com retries) | `X-Cal-Signature-256` HMAC-SHA256 |
 | Jitsi | `202 Accepted` on success | GET returns 200 for webhook verification |
 | UniSender Go | `202 Accepted` on success | GET returns 200 for webhook verification |
 | GetStream | `202 Accepted` on success | GET returns 200 for webhook verification |
+| Admin | `202 Accepted` on success | Static API key |
+
+All POST endpoints return `503 Service Unavailable` when RabbitMQ does not confirm the publish
+within `PUBLISH_TIMEOUT` (default 10s) or returns the message as unroutable — sources must retry.
 
 ---
 

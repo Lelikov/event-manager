@@ -5,7 +5,13 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from event_receiver.errors import BadRequestError, ConfigurationError, IngestError, UnauthorizedError
+from event_receiver.errors import (
+    BadRequestError,
+    ConfigurationError,
+    IngestError,
+    PublishUnavailableError,
+    UnauthorizedError,
+)
 from event_receiver.interfaces.ingest import IIngestController
 
 
@@ -14,6 +20,7 @@ logger = structlog.get_logger(__name__)
 
 INGEST_ROUTE_TO_METHOD = {
     "/event/booking": "ingest_booking",
+    "/event/calcom": "ingest_calcom",
     "/event/getstream": "ingest_getstream",
     "/event/jitsi": "ingest_jitsi",
     "/event/unisender-go": "ingest_unisender_go",
@@ -31,6 +38,9 @@ def _raise_http_from_ingest_error(exc: IngestError) -> None:
     if isinstance(exc, ConfigurationError):
         logger.error("Ingest request failed with configuration error", error=str(exc))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    if isinstance(exc, PublishUnavailableError):
+        logger.error("Ingest request failed: broker unavailable or message unroutable", error=str(exc))
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     logger.exception("Ingest request failed with unexpected internal error")
     raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal ingest error") from exc
 

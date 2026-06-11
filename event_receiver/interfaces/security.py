@@ -7,8 +7,7 @@ class IAuthorizationJWTVerifier(Protocol):
     def verify(
         self,
         *,
-        token: str | None = None,
-        claims: dict[str, Any] | None = None,
+        claims: dict[str, Any],
         event_source: str,
         event_type: str,
     ) -> dict[str, Any]: ...

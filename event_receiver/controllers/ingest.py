@@ -11,8 +11,8 @@ from cloudevents.v1.pydantic.v2.conversion import from_http
 from event_schemas.booking import BookingCreatedPayload
 from event_schemas.types import EventType
 from pydantic import ValidationError
-from stream_chat import StreamChat
 
+from event_receiver.calcom import CALCOM_SIGNATURE_HEADER, transform_calcom_webhook
 from event_receiver.errors import BadRequestError, ConfigurationError, UnauthorizedError
 from event_receiver.interfaces.ingest import IIngestController
 from event_receiver.utils import extract_trace_id_from_headers
@@ -27,6 +27,25 @@ if TYPE_CHECKING:
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _user_info(user: dict[str, Any]) -> dict[str, Any]:
+    """Build a UserInfo-shaped dict ({email, time_zone?}) from a participant entry."""
+    info: dict[str, Any] = {"email": user["email"]}
+    if user.get("time_zone"):
+        info["time_zone"] = user["time_zone"]
+    return info
+
+
+def _participant_entry(user: dict[str, Any]) -> dict[str, Any]:
+    """Build a BookingParticipant-shaped dict; guests are normalized to role 'client'."""
+    role = user.get("role")
+    entry: dict[str, Any] = {"email": user["email"], "role": "client" if role == "guest" else role}
+    if user.get("time_zone"):
+        entry["time_zone"] = user["time_zone"]
+    if user.get("locale"):
+        entry["locale"] = user["locale"]
+    return entry
 
 
 class IngestController(IIngestController):
@@ -45,7 +64,7 @@ class IngestController(IIngestController):
     async def ingest_jitsi(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
 
-        logger.info("Started Jitsi ingest", body=body, trace_id=trace_id)
+        logger.info("Started Jitsi ingest", trace_id=trace_id)
         token = headers.get("Authorization")
         if not token:
             raise UnauthorizedError("Missing Authorization header")
@@ -73,6 +92,9 @@ class IngestController(IIngestController):
         )
         logger.debug("JWT claims verified and filtered", claims_count=len(claims), trace_id=trace_id)
 
+        if not isinstance(incoming.data, dict):
+            raise BadRequestError("Event data must be a JSON object")
+
         await self._publisher.publish(
             source=incoming.source,
             event_type=incoming.type,
@@ -94,8 +116,8 @@ class IngestController(IIngestController):
         # Extract trace_id from HTTP headers
         trace_id = extract_trace_id_from_headers(dict(headers))
 
-        logger.info("Started Booking ingest", body=body, trace_id=trace_id)
-        if self._settings.booking_api_key != headers.get("Authorization"):
+        logger.info("Started Booking ingest", trace_id=trace_id)
+        if not hmac.compare_digest(self._settings.booking_api_key, headers.get("Authorization", "")):
             logger.warning("Booking ingest failed: invalid API key")
             raise UnauthorizedError("Invalid Booking API key")
 
@@ -113,24 +135,16 @@ class IngestController(IIngestController):
             trace_id=trace_id,
         )
 
+        if not isinstance(incoming.data, dict):
+            raise BadRequestError("Event data must be a JSON object")
         data = dict(incoming.data)
         booking_uid = data.pop("booking_uid", None)
         if not booking_uid:
             raise BadRequestError("Missing booking_uid in payload")
 
+        payload_dict = data
         if incoming.type == EventType.BOOKING_CREATED:
-            payload_dict = self._transform_booking_created_payload(data)
-            try:
-                BookingCreatedPayload(**payload_dict)
-            except ValidationError as exc:
-                logger.exception(
-                    "Booking schema validation failed",
-                    event_type=incoming.type,
-                    validation_errors=exc.errors(),
-                )
-                raise BadRequestError(f"Invalid booking payload schema: {exc}") from exc
-        else:
-            payload_dict = data
+            payload_dict = self._validated_booking_created(data)
 
         await self._publisher.publish(
             source=incoming.source,
@@ -150,20 +164,88 @@ class IngestController(IIngestController):
             trace_id=trace_id,
         )
 
+    def _validated_booking_created(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Transform a users-list booking.created payload and validate it against the canonical model."""
+        payload_dict = self._transform_booking_created_payload(data)
+        try:
+            BookingCreatedPayload(**payload_dict)
+        except ValidationError as exc:
+            logger.warning(
+                "Booking schema validation failed",
+                validation_errors=exc.errors(),
+            )
+            raise BadRequestError(f"Invalid booking payload schema: {exc}") from exc
+        return payload_dict
+
+    async def ingest_calcom(self, *, headers: Mapping[str, str], body: bytes) -> None:
+        trace_id = extract_trace_id_from_headers(dict(headers))
+        logger.info("Started cal.com ingest", trace_id=trace_id)
+
+        signature = headers.get(CALCOM_SIGNATURE_HEADER) or headers.get("X-Cal-Signature-256")
+        if signature is None:
+            raise UnauthorizedError("Missing X-Cal-Signature-256 header")
+        if not self._is_valid_calcom_signature(body=body, signature=signature):
+            logger.warning("cal.com webhook failed: invalid signature")
+            raise UnauthorizedError("Invalid cal.com webhook signature")
+
+        webhook = self._parse_json_body(body)
+        event = transform_calcom_webhook(webhook)
+
+        data = event.data
+        if event.event_type == EventType.BOOKING_CREATED:
+            data = self._validated_booking_created(data)
+
+        created_at = webhook.get("createdAt")
+        await self._publisher.publish(
+            source=event.source,
+            event_type=event.event_type,
+            event_time=created_at if isinstance(created_at, str) else None,
+            booking_id=event.booking_uid,
+            data=data,
+            trace_id=trace_id,
+        )
+        logger.info(
+            "cal.com ingest completed",
+            trigger_event=webhook.get("triggerEvent"),
+            event_type=str(event.event_type),
+            booking_id=event.booking_uid,
+            trace_id=trace_id,
+        )
+
+    def _is_valid_calcom_signature(self, *, body: bytes, signature: str) -> bool:
+        """Verify a cal.com webhook signature: HMAC-SHA256 hex digest of the raw body with the webhook secret."""
+        expected = hmac.new(self._settings.calcom_webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+
     @staticmethod
     def _transform_booking_created_payload(data: dict[str, Any]) -> dict[str, Any]:
-        """Transform users list from booking.created into user/client structure expected by BookingCreatedPayload."""
+        """Transform users list from booking.created into user/client structure expected by BookingCreatedPayload.
+
+        The full participant list (organizer + ALL clients/guests) is preserved under ``users``
+        so normalization downstream does not silently drop extra attendees; ``user``/``client``
+        keep the canonical primary pair. Guests are normalized to role ``client``.
+        """
         users = data.get("users", [])
+        if not isinstance(users, list) or not all(isinstance(user, dict) for user in users):
+            raise BadRequestError("booking.created requires a users list of objects")
         organizer = next((u for u in users if u.get("role") == "organizer"), None)
-        client = next((u for u in users if u.get("role") == "client"), None)
-        if not organizer or not client:
-            raise BadRequestError("booking.created requires organizer and client in users")
-        result: dict[str, Any] = {
-            "user": {"email": organizer["email"]},
-            "client": {"email": client["email"]},
-            "start_time": data["start_time"],
-            "end_time": data["end_time"],
-        }
+        clients = [u for u in users if u.get("role") in ("client", "guest")]
+        if not organizer or not clients:
+            raise BadRequestError("booking.created requires organizer and at least one client in users")
+        try:
+            result: dict[str, Any] = {
+                "user": _user_info(organizer),
+                "client": _user_info(clients[0]),
+                "start_time": data["start_time"],
+                "end_time": data["end_time"],
+                "users": [
+                    _participant_entry(user)
+                    for user in users
+                    if user.get("email") and user.get("role") in ("organizer", "client", "guest")
+                ],
+            }
+        except KeyError as exc:
+            raise BadRequestError(f"booking.created payload missing required field: {exc}") from exc
         if data.get("volunteer_id"):
             result["volunteer_id"] = data["volunteer_id"]
         if data.get("client_id"):
@@ -173,7 +255,7 @@ class IngestController(IIngestController):
     async def ingest_unisender_go(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
 
-        logger.info("Started UniSender Go ingest", body=body, trace_id=trace_id)
+        logger.info("Started UniSender Go ingest", trace_id=trace_id)
 
         if not body:
             logger.warning("UniSender Go ingest failed: empty request body")
@@ -192,7 +274,7 @@ class IngestController(IIngestController):
             logger.warning("UniSender Go ingest failed: invalid auth signature")
             raise UnauthorizedError("Invalid UniSender Go auth signature")
 
-        for event_by_user in ujson.loads(body).get("events_by_user", []):
+        for event_by_user in self._parse_json_body(body).get("events_by_user", []):
             for event in event_by_user.get("events", []):
                 event_data = dict(event.get("event_data", {}))
                 metadata = dict(event_data.get("metadata", {}))
@@ -214,14 +296,13 @@ class IngestController(IIngestController):
         trace_id = extract_trace_id_from_headers(dict(headers))
 
         logger.info("Started Getstream ingest", trace_id=trace_id)
-        client = StreamChat(api_key=self._settings.getstream_api_key, api_secret=self._settings.getstream_api_secret)
         signature = headers.get("X-SIGNATURE")
         if signature is None:
             raise UnauthorizedError("Missing X-SIGNATURE header")
-        if not client.verify_webhook(body, signature):
+        if not self._is_valid_getstream_signature(body=body, signature=signature):
             logger.warning("Getstream webhook failed: invalid signature")
             raise UnauthorizedError("Invalid Getstream webhook signature")
-        data = ujson.loads(body)
+        data = self._parse_json_body(body)
         await self._publisher.publish(
             source="getstream",
             event_type=f"getstream.{data.get('type', 'unknown')}",
@@ -235,8 +316,9 @@ class IngestController(IIngestController):
         trace_id = extract_trace_id_from_headers(dict(headers))
         logger.info("Started Admin ingest", trace_id=trace_id)
 
-        if self._settings.admin_api_key != headers.get("Authorization"):
-            logger.warning("Admin ingest failed: invalid API key")
+        token = self._bearer_token(headers)
+        if not hmac.compare_digest(self._settings.admin_api_key, token):
+            logger.warning("Admin ingest failed: missing or invalid Bearer API key")
             raise UnauthorizedError("Invalid Admin API key")
 
         try:
@@ -245,7 +327,7 @@ class IngestController(IIngestController):
             logger.warning("Admin event parsing failed")
             raise BadRequestError("Invalid Admin event payload or headers") from exc
 
-        data = dict(incoming.data) if incoming.data else {}
+        data = dict(incoming.data) if isinstance(incoming.data, dict) else {}
         booking_id = data.get("booking_uid") or None
 
         await self._publisher.publish(
@@ -264,6 +346,35 @@ class IngestController(IIngestController):
             event_id=incoming.id,
             trace_id=trace_id,
         )
+
+    def _is_valid_getstream_signature(self, *, body: bytes, signature: str) -> bool:
+        """Verify a GetStream webhook signature: HMAC-SHA256 hex digest of the raw body with the API secret."""
+        expected = hmac.new(self._settings.getstream_api_secret.encode(), body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+
+    @staticmethod
+    def _bearer_token(headers: Mapping[str, str]) -> str:
+        """Extract the token from ``Authorization: Bearer <token>``.
+
+        Malformed headers (missing, raw key without scheme, wrong scheme) yield ""
+        so the constant-time comparison against the real key always fails.
+        """
+        authorization = headers.get("Authorization", "")
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer":
+            return ""
+        return token.strip()
+
+    @staticmethod
+    def _parse_json_body(body: bytes) -> dict[str, Any]:
+        """Parse a raw request body as a JSON object, mapping parse failures to 400."""
+        try:
+            data = ujson.loads(body)
+        except ValueError as exc:
+            raise BadRequestError("Request body is not valid JSON") from exc
+        if not isinstance(data, dict):
+            raise BadRequestError("Request body must be a JSON object")
+        return data
 
     @staticmethod
     def _replace_auth_with_api_key(*, body: str, api_key: str) -> str:

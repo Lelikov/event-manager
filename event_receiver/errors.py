@@ -12,3 +12,7 @@ class UnauthorizedError(IngestError):
 
 class ConfigurationError(IngestError):
     """Raised when service configuration is invalid."""
+
+
+class PublishUnavailableError(IngestError):
+    """Raised when the broker cannot accept or route a publish (timeout, blocked connection, unroutable)."""

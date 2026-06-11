@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator, Callable
 
 import structlog
 from dishka import Provider, Scope, provide
-from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, fastapi
+from faststream.rabbit import Channel, ExchangeType, RabbitBroker, RabbitExchange, fastapi
 from httpx import AsyncClient
 
 from event_receiver.adapters import CloudEventPublisher, RabbitTopologyManager, UserResolver
@@ -37,8 +37,17 @@ class AppProvider(Provider):
 
     @provide(scope=Scope.APP)
     def provide_faststream_router(self, settings: Settings) -> fastapi.RabbitRouter:
-        logger.info("Creating FastStream RabbitRouter", rabbit_url=settings.rabbit_url)
-        return fastapi.RabbitRouter(str(settings.rabbit_url))
+        logger.info(
+            "Creating FastStream RabbitRouter",
+            rabbit_host=settings.rabbit_url.host,
+            rabbit_port=settings.rabbit_url.port,
+            rabbit_vhost=settings.rabbit_url.path,
+        )
+        # on_return_raises=True: unroutable mandatory publishes raise instead of being silently dropped
+        return fastapi.RabbitRouter(
+            str(settings.rabbit_url),
+            default_channel=Channel(on_return_raises=True),
+        )
 
     @provide(scope=Scope.APP)
     def provide_broker(self, router: fastapi.RabbitRouter) -> RabbitBroker:
@@ -115,6 +124,7 @@ class AppProvider(Provider):
             router_by_event=event_router,
             user_resolver=user_resolver,
             getstream_decoder=getstream_decoder,
+            publish_timeout=settings.publish_timeout,
             debug=settings.debug,
         )
 
@@ -125,11 +135,11 @@ class AppProvider(Provider):
         broker: RabbitBroker,
         exchange: RabbitExchange,
     ) -> ITopologyManager:
-        logger.info("Providing RabbitTopologyManager", topology_queue_count=len(settings.topology_queues))
+        logger.info("Providing RabbitTopologyManager (canonical topology from event_schemas)")
         return RabbitTopologyManager(
             broker=broker,
             exchange=exchange,
-            topology_queues=settings.topology_queues,
+            required_destinations=frozenset(settings.routing_destinations),
         )
 
     @provide(scope=Scope.APP)

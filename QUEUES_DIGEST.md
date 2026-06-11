@@ -6,8 +6,8 @@
 
 | Queue | Source Pattern | Type Pattern | Events |
 |---|---|---|---|
-| `events.booking.lifecycle` | `booking` | `booking.created` / `booking.rescheduled` / `booking.reassigned` / `booking.cancelled` / `booking.rejected` | lifecycle бронирования |
-| `events.booking.reminder` | `booking` | `booking.reminder_sent` | отправка напоминаний |
+| `events.booking.lifecycle` (routing key) | `booking` | `booking.created` / `booking.rescheduled` / `booking.reassigned` / `booking.cancelled` / `booking.rejected` / `booking.reminder_sent` | lifecycle бронирования |
+| `events.booking.lifecycle` (routing key) | `admin` | `booking.client_reassigned` | смена клиента администратором (через `POST /event/admin`) |
 | `events.chat.lifecycle` | `booking` | `chat.created` / `chat.deleted` | lifecycle чата |
 | `events.chat.activity` | `booking` | `chat.message_sent` | активность в чате |
 | `events.meeting.lifecycle` | `booking` | `meeting.url_created` / `meeting.url_deleted` | lifecycle meeting URL |
@@ -28,11 +28,16 @@
 - `booking.reassigned`
 - `booking.cancelled`
 - `booking.rejected` — (от event-booking при нарушении constraint validation)
+- `booking.reminder_sent` — (зарезервировано, продюсера сейчас нет)
+- `booking.client_reassigned` — (source `admin`, от event-admin через `POST /event/admin`;
+  см. `docs/architecture/MESSAGE_CONTRACTS.md`)
 
-## events.booking.reminder
+К routing key `events.booking.lifecycle` привязаны ДВЕ очереди (fan-out, по одной на консьюмера):
+- `events.booking.lifecycle.saver` — event-saver
+- `events.booking.lifecycle.booking` — event-booking
 
-События про отправку напоминаний:
-- `booking.reminder_sent`
+Очередь `events.booking.reminder` удалена (не имела ни продюсера, ни консьюмера);
+напоминания идут через `notification.send_requested` (trigger `BOOKING_REMINDER`).
 
 ## events.chat.lifecycle
 
@@ -117,7 +122,7 @@ Fallback-очередь по умолчанию:
   - `content-type` вынимается отдельно в параметр `content_type`.
 
 Для booking-событий обычно так:
-- **Headers**: `ce-type`, `ce-source`, `ce-id`, `ce-time`, `ce-booking_id`, `ce-specversion` (+ прочие системные при необходимости)
+- **Headers**: `ce-type`, `ce-source`, `ce-id`, `ce-time`, `ce-bookingid`, `ce-specversion` (+ прочие системные при необходимости)
 - **Payload (body/data)**: поля события **кроме** `booking_uid`.
 
 ### Входящий payload `/event/booking` (контракт источника)
@@ -128,12 +133,11 @@ Fallback-очередь по умолчанию:
 
 ### booking.created
 - `booking_uid: str`
-- `user.email: str`
-- `user.time_zone: str`
-- `client.email: str`
-- `client.time_zone: str`
-- `start_time: datetime`
-- `end_time: datetime`
+- `users: list[{email, role: organizer|client|guest, time_zone?}]` — ровно один organizer,
+  ≥1 client/guest; guest нормализуется в role `client`; ВСЕ участники попадают
+  в `normalized.participants` (multi-attendee/seated бронирования поддерживаются)
+- исходящий payload: `user{email,time_zone?}` / `client{email,time_zone?}` (первичная пара),
+  `users[]` (полный список), `start_time: datetime`, `end_time: datetime`
 
 ### booking.rescheduled
 - `booking_uid: str`
@@ -200,7 +204,7 @@ Fallback-очередь по умолчанию:
 ### Исходящий payload (body/data) в RabbitMQ для booking endpoint
 
 Для всех событий выше действует правило:
-- `booking_uid` переносится в header `ce-booking_id`;
+- `booking_uid` переносится в header `ce-bookingid`;
 - в `body` остаются остальные поля из списка соответствующего события.
 
 ## events.notification.commands
@@ -212,3 +216,37 @@ Fallback-очередь по умолчанию:
 **Консьюмер:** `event-notifier`
 **Source pattern:** `*` (любой сервис может отправить команду)
 **Типовой источник:** `booking` (от event-booking)
+
+## Каноническая топология (audit-v2)
+
+Источник истины — `event_schemas.queues` (`ALL_QUEUES`, `ROUTING_RULES`):
+
+- exchange `events` (topic, durable), DLX `events.dlx` (topic, durable);
+- аргументы каждой очереди (verbatim): `x-max-priority=10`,
+  `x-dead-letter-exchange=events.dlx`, `x-dead-letter-routing-key=<queue>.dlq`;
+- для каждой очереди объявляется `<queue>.dlq` (`x-message-ttl=86400000`), привязанная к `events.dlx`;
+- event-receiver объявляет ПОЛНУЮ топологию на старте; каждый консьюмер
+  идемпотентно объявляет свои очереди с теми же аргументами;
+- одна очередь = один консьюмер; fan-out — через несколько очередей на один routing key;
+- неизвестные `EventType` больше не дают 500: публикуются в `events.unrouted`;
+- на старте event-receiver валидирует, что каждый routing destination имеет
+  очередь с соответствующим binding (иначе fail-fast `ConfigurationError`);
+- publish выполняется с confirm-таймаутом (`PUBLISH_TIMEOUT`, по умолчанию 10s)
+  и `on_return_raises=True`: таймаут/unroutable → HTTP 503, источник ретраит.
+
+### DLQ: окно потери 24 часа (известное ограничение)
+
+`<queue>.dlq` имеет `x-message-ttl=86400000` (24h) и НЕ имеет собственного
+dead-letter-exchange — ни один сервис не консьюмит `*.dlq`. Сообщение, попавшее
+в DLQ (nack консьюмера после ошибки парсинга/записи), безвозвратно удаляется
+через 24 часа. Аргументы каноничны в `event_schemas.queues` (CONTRACT_DECISIONS D2),
+менять их локально нельзя. Операционные требования:
+- алертинг на глубину `*.dlq` (depth > 0 — инцидент, есть максимум 24h на redrive);
+- redrive вручную: shovel/`rabbitmqadmin` из `<queue>.dlq` обратно в exchange `events`
+  с routing key `<queue>` после устранения причины nack.
+
+### Ingress cal.com (`/event/calcom`)
+
+Нативные webhooks cal.com транслируются в канонические `booking.*` события
+(source `booking` → routing rules booking lifecycle). Неизвестные `triggerEvent`
+публикуются как `calcom.<trigger>` (source `calcom`) → `events.unrouted`.

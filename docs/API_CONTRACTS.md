@@ -18,7 +18,9 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 - Body (JSON):
   - `booking_uid` (str, **required**): Booking identifier, extracted from a copy of the payload before publish
   - For `booking.created` type, body must contain:
-    - `users` (list): Array of `{role: "organizer"|"client", email: str}` objects
+    - `users` (list): Array of `{role: "organizer"|"client"|"guest", email: str, time_zone?: str, locale?: str}` objects.
+      Exactly one organizer is required plus at least one client/guest; ALL clients/guests are preserved
+      (guests are normalized to role `client`) and emitted into `normalized.participants`
     - `start_time` (str): Booking start time
     - `end_time` (str): Booking end time
   - For other booking types: arbitrary JSON payload passed through
@@ -31,6 +33,7 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 - `400 Bad Request`: Invalid payload, missing `booking_uid`, schema validation failure for `booking.created`
 - `401 Unauthorized`: Invalid API key
 - `500 Internal Server Error`: Unexpected error
+- `503 Service Unavailable`: RabbitMQ did not confirm the publish (timeout/blocked) or returned the message as unroutable — the webhook source should retry
 
 ---
 
@@ -56,6 +59,7 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 - `400 Bad Request`: Invalid CloudEvent payload or headers
 - `401 Unauthorized`: Invalid/expired JWT, claim mismatch (source/type)
 - `500 Internal Server Error`: Unexpected error
+- `503 Service Unavailable`: RabbitMQ did not confirm the publish (timeout/blocked) or returned the message as unroutable — the webhook source should retry
 
 ---
 
@@ -91,7 +95,7 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 
 **Source**: `routes.py:15-19`, controller: `controllers/ingest.py:196-215`
 
-**Authentication**: GetStream webhook signature in `X-SIGNATURE` header. Absence of the header raises `UnauthorizedError` (HTTP 401) before any further processing. Signature verified via `StreamChat.verify_webhook(body, signature)` using `Settings.getstream_api_key` and `Settings.getstream_api_secret` -- `controllers/ingest.py:200-206`.
+**Authentication**: GetStream webhook signature in `X-SIGNATURE` header. Absence of the header raises `UnauthorizedError` (HTTP 401) before any further processing. Signature verified inline: constant-time comparison of HMAC-SHA256 hex digest of the raw body keyed with `Settings.getstream_api_secret` (no stream-chat dependency).
 
 **Request**:
 - Content-Type: `application/json`
@@ -108,6 +112,62 @@ All ingest endpoints are registered in `event_receiver/routes.py:15-81`. Each en
 **Error Codes**:
 - `401 Unauthorized`: Missing `X-SIGNATURE` header, invalid signature
 - `500 Internal Server Error`: Unexpected error
+- `503 Service Unavailable`: RabbitMQ did not confirm the publish (timeout/blocked) or returned the message as unroutable — the webhook source should retry
+
+---
+
+### POST /event/calcom
+
+**Source**: `routes.py` (`INGEST_ROUTE_TO_METHOD`), controller: `controllers/ingest.py` (`ingest_calcom`), translation: `event_receiver/calcom.py`
+
+**Authentication**: `X-Cal-Signature-256` header — HMAC-SHA256 hex digest of the raw body keyed with `Settings.calcom_webhook_secret`, compared constant-time. Missing header → 401.
+
+**Request** (native cal.com webhook format):
+- Content-Type: `application/json`
+- Body (JSON):
+  - `triggerEvent` (str, **required**): cal.com trigger, e.g. `BOOKING_CREATED`, `BOOKING_CANCELLED`, `BOOKING_RESCHEDULED`
+  - `createdAt` (str): used as CloudEvent `time`
+  - `payload` (object, **required**): native cal.com booking payload (`uid`, `organizer`, `attendees[]`, `responses.guests.value[]`, `startTime`, `endTime`, ...)
+
+**Translation** (known triggers → canonical internal payloads, source `booking`):
+- `BOOKING_CREATED` → `booking.created` (`user`/`client` + full `users[]`; organizer + all attendees + guests; guests get role `client`)
+- `BOOKING_CANCELLED` → `booking.cancelled` (`cancellationReason` → `cancellation_reason`, `cancelledBy` → `cancelled_by`)
+- `BOOKING_RESCHEDULED` → `booking.rescheduled` (NEW `uid` = CloudEvent `bookingid`; `rescheduleUid` → `previous_booking_uid`, `rescheduleStartTime` → `previous_start_time`, `rescheduledBy` → `rescheduled_by`)
+- Any other trigger → published as type `calcom.<trigger_lowercase>` with source `calcom`, payload preserved → routed to `events.unrouted`
+
+**Response**:
+- `202 Accepted`: Event accepted and published
+- `200 OK` (GET only): `{"status": "ok"}`
+
+**Error Codes**:
+- `400 Bad Request`: Non-JSON body, missing `triggerEvent`/`payload`/`uid`, no organizer or no client/guest, schema validation failure
+- `401 Unauthorized`: Missing or invalid `X-Cal-Signature-256`
+- `503 Service Unavailable`: Broker publish failed — cal.com retries
+
+---
+
+### POST /event/admin
+
+**Source**: `routes.py` (`INGEST_ROUTE_TO_METHOD`), controller: `controllers/ingest.py` (`ingest_admin`)
+
+**Authentication**: `Authorization: Bearer <key>` — the token part is compared constant-time against
+`Settings.admin_api_key`. Malformed headers (raw key without scheme, wrong scheme, missing header) are
+rejected with 401. Senders: event-admin `EventPublisherClient`, event-notifier `DeliveryResultPublisher`.
+
+**Request**:
+- Content-Type: CloudEvents binary format (headers + JSON body)
+- Required CloudEvent headers: `ce-type`, `ce-source`, `ce-id`, `ce-specversion`
+- Body (JSON): admin-originated event payload; `booking_uid` (optional) is used as `bookingid`
+- Accepted types (per routing rules): `user.email.*` (→ `events.user.email`), `booking.client_reassigned` (→ `events.booking.lifecycle`)
+
+**Response**:
+- `202 Accepted`: Event accepted and published
+- `200 OK` (GET only): `{"status": "ok"}`
+
+**Error Codes**:
+- `400 Bad Request`: Invalid CloudEvent payload or headers
+- `401 Unauthorized`: Invalid API key
+- `503 Service Unavailable`: Broker publish failed
 
 ---
 
@@ -145,7 +205,7 @@ Every published message includes these CloudEvent attributes as AMQP headers (`a
 | `source` | Source identifier | e.g., `booking`, `jitsi`, `unisender-go`, `getstream` |
 | `id` | From incoming event or auto-generated | CloudEvent ID |
 | `time` | From incoming event (if provided) | ISO 8601 timestamp |
-| `booking_id` | Extracted per endpoint (if present) | Booking UID (CE extension); only set when a booking_id is available for the event |
+| `bookingid` | Extracted per endpoint (if present) | Booking UID (CE extension, AMQP header `ce-bookingid`); only set when a booking_id is available for the event |
 | `traceid` | From request headers or generated UUID | Distributed trace ID |
 | `spanid` | Generated UUID | Span ID for this publish operation |
 | `idempotencykey` | SHA256 of type+booking_id+data | Deterministic dedup key |
@@ -163,7 +223,13 @@ All messages have a normalized body structure (`normalizers.py:26-50`):
   "original": { /* raw payload as received */ },
   "normalized": {
     "participants": [
-      {"email": "user@example.com", "role": "organizer", "user_id": "uuid-from-event-users"}
+      {
+        "email": "user@example.com",
+        "role": "organizer",
+        "time_zone": "Europe/Madrid",
+        "locale": "ru",
+        "user_id": "uuid-from-event-users"
+      }
     ]
   }
 }
@@ -179,7 +245,7 @@ Routing is first-match based on glob patterns (`routing.py:43-65`, rules in `con
 | `events.booking.lifecycle` | `booking` | `booking.rescheduled` | 10 (CRITICAL) | `booking.rescheduled` |
 | `events.booking.lifecycle` | `booking` | `booking.reassigned` | 10 (CRITICAL) | `booking.reassigned` |
 | `events.booking.lifecycle` | `booking` | `booking.cancelled` | 10 (CRITICAL) | `booking.cancelled` |
-| `events.booking.reminder` | `booking` | `booking.reminder_sent` | 7 (HIGH) | `booking.reminder_sent` |
+| `events.booking.lifecycle` | `booking` | `booking.reminder_sent` | 7 (HIGH) | `booking.reminder_sent` |
 | `events.chat.lifecycle` | `booking` | `chat.created` | 5 (NORMAL) | `chat.created` |
 | `events.chat.lifecycle` | `booking` | `chat.deleted` | 5 (NORMAL) | `chat.deleted` |
 | `events.chat.activity` | `booking` | `chat.message_sent` | 5 (NORMAL) | `chat.message_sent` |
@@ -228,7 +294,7 @@ sequenceDiagram
     Normalizer-->>Publisher: {original, normalized: {participants}}
     loop For each participant
         Publisher->>UserResolver: resolve_or_create(email, role)
-        UserResolver->>EventUsers: GET /api/users/roles/{role}/emails/{email}
+        UserResolver->>EventUsers: GET /api/users/by-identity?email=&role=
         EventUsers-->>UserResolver: user_id (or 404)
         opt User not found
             UserResolver->>EventUsers: POST /api/users {email, role}

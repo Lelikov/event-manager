@@ -31,12 +31,12 @@ The `event-receiver` service is the HTTP ingress gateway for the event-driven sy
 | Dependency | Type | Purpose |
 |---|---|---|
 | RabbitMQ | Message broker | Publish CloudEvents to topic exchange |
-| event-users | HTTP service | Resolve participant emails to user UUIDs (`/api/users/roles/{role}/emails/{email}`, `/api/users`) |
+| event-users | HTTP service | Resolve participant emails to user UUIDs (`/api/users/by-identity`, `/api/users`) |
 | event-schemas | Python library | Shared Pydantic models for event payloads, EventType enum, priorities, schema versions |
 
 ## Key Configuration
 
-All environment variables are defined in `event_receiver/config.py:97-128` (`Settings` class, Pydantic BaseSettings):
+All environment variables are defined in `event_receiver/config.py` (`Settings` class, Pydantic BaseSettings):
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
@@ -46,7 +46,8 @@ All environment variables are defined in `event_receiver/config.py:97-128` (`Set
 | `RABBIT_EXCHANGE` | str | `"events"` | Topic exchange name |
 | `DEFAULT_RABBIT_DESTINATION` | str | `"events.unrouted"` | Fallback routing key when no rule matches |
 | `EVENT_ROUTING_RULES` | list[RouteRule] | See `_default_route_rules()` | Ordered routing rules (first match wins) |
-| `RABBIT_TOPOLOGY_QUEUES` | list[str] | `[]` (derived from routing destinations) | Explicit queue list for topology declaration |
+| `PUBLISH_TIMEOUT` | float | `10.0` | RabbitMQ publish confirm timeout (seconds); exceeded → HTTP 503 |
+| `CORS_ORIGINS` | str | `http://localhost:5173` | Comma-separated CORS allow-origins (flows through Settings/.env) |
 | `AUTHORIZATION_JWT_VERIFY_KEY` | str | **required** | Shared secret/key for JWT signature verification |
 | `AUTHORIZATION_JWT_ALGORITHM` | str | `"HS256"` | JWT algorithm |
 | `AUTHORIZATION_JWT_ISSUER` | str | **required** | Expected JWT issuer claim |
@@ -56,10 +57,14 @@ All environment variables are defined in `event_receiver/config.py:97-128` (`Set
 | `GETSTREAM_API_SECRET` | str | **required** | GetStream API secret (webhook signature verification) |
 | `GETSTREAM_USER_ID_ENCRYPTION_KEY` | str | **required** | AES key for decrypting GetStream user IDs to emails |
 | `BOOKING_API_KEY` | str | **required** | API key for booking service authentication |
+| `ADMIN_API_KEY` | str | **required** | API key for /event/admin authentication |
+| `CALCOM_WEBHOOK_SECRET` | str | **required** | Secret for cal.com `X-Cal-Signature-256` HMAC verification |
 | `EVENT_USERS_API_URL` | str | **required** | Base URL for event-users service |
 | `EVENT_USERS_API_TOKEN` | str | **required** | Bearer token for event-users API |
 
-Source: `event-receiver/event_receiver/config.py:97-128`
+Outside `DEBUG`, every secret must be ≥16 chars, non-placeholder (startup fails fast otherwise).
+
+Source: `event-receiver/event_receiver/config.py` (`Settings`)
 
 ## Architecture Diagram
 
@@ -104,34 +109,13 @@ graph TD
     PUBLISHER -->|Publish CloudEvent| RABBIT
 ```
 
-## Known Limitations (Open Audit Findings)
+## Known Limitations (audit-v2, 2026-06-11)
 
-The following findings from the 2026-04-19 audit remain open as accepted technical debt. Several critical and high-severity findings have been resolved — see `docs/AUDIT.md` for the full resolved list.
+All findings of the 2026-06-11 audit were fixed (see `docs/AUDIT.md`). Remaining accepted limitations:
 
-### MEDIUM
-
-| Finding | Location | Impact |
-|---|---|---|
-| `EVENTS_DIGEST.md` booking.created schema does not match actual code (expects `users[]` list, docs show `user`/`client` objects) | `controllers/ingest.py:148-160` | External callers reading docs will send wrong format |
-| `PROJECT_CONTEXT.md` and `CLAUDE.md` document non-existent `/event/cloudevents` endpoint | `routes.py` (absent) | Documentation advertises capability that does not exist |
-| `QUEUES_DIGEST.md` shows `*` as source_pattern where code uses `booking` | `config.py:9-94` | Docs mislead on routing behavior |
-| `pyproject.toml` pins event-schemas via absolute local path | `pyproject.toml:11` | Breaks in CI/Docker/other dev machines |
-| `normalizers.py` silently swallows ValidationError/KeyError/ValueError | `normalizers.py:45-49` | Schema regressions invisible at runtime |
-| `RABBITMQ_MESSAGES_SPEC.md` unreferenced and unverified | Root directory | Potentially stale documentation |
-
-### LOW
-
-| Finding | Location | Impact |
-|---|---|---|
-| `logger.py` suppresses irrelevant packages (aiokafka, asyncio_redis, botocore) | `logger.py:67-71` | Dead configuration noise |
-| Empty `schemas.py` placeholder | `schemas.py` | Module clutter |
-| Service name inconsistency (`event-manager` vs `event-receiver`) | `CLAUDE.md:3`, `main.py:105` | Ambiguous naming |
-| Bare `Callable` type annotation for getstream decoder | `ioc.py:80,108` | Type checking gap |
-| No automated tests | Project root | Zero test coverage |
-
-### HIGH (Open)
-
-| Finding | Location | Impact |
-|---|---|---|
-| No idempotency enforcement at event-receiver layer | `adapters/publisher.py:67-71` | Duplicate webhooks produce duplicate RabbitMQ messages (dedup delegated to event-saver) |
-| RabbitMQ broker connect failure at startup has no retry | `main.py:73-74` | Crash-loop if RabbitMQ not ready at startup |
+| Limitation | Detail |
+|---|---|
+| DLQ 24h loss window | `*.dlq` queues have `x-message-ttl=86400000` and no consumer; messages are destroyed after 24h. Queue args are canonical in `event_schemas.queues` (CONTRACT_DECISIONS D2) — requires alerting on DLQ depth + manual redrive runbook (see `QUEUES_DIGEST.md`) |
+| user_id backfill | When event-users is down, events publish with `user_id=null` participants; the receiver logs a structured warning but the backfill job is downstream (event-saver/event-users) scope |
+| GetStream user-id legacy CBC fallback | Decoder accepts both AES-GCM (canonical) and legacy zero-IV AES-CBC; the CBC fallback should be deleted once event-booking switches its encoder to `encode_getstream_user_id` (AES-GCM) |
+| In-memory idempotency cache | Duplicate suppression is per-process with 10-minute TTL; authoritative dedup remains event-saver's DB constraint |

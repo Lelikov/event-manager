@@ -48,7 +48,19 @@ interface-driven архитектуры:
 
 - `POST /event/getstream`
   - принимает webhook от GetStream,
-  - проверяет HMAC-подпись в `X-SIGNATURE`,
+  - проверяет HMAC-подпись в `X-SIGNATURE` (inline HMAC-SHA256, constant-time),
+  - публикует событие в RabbitMQ.
+
+- `POST /event/calcom`
+  - принимает нативный webhook cal.com (`triggerEvent`/`createdAt`/`payload`),
+  - проверяет подпись `X-Cal-Signature-256` (HMAC-SHA256 от raw body, `calcom_webhook_secret`),
+  - транслирует `BOOKING_CREATED`/`BOOKING_CANCELLED`/`BOOKING_RESCHEDULED`
+    в канонические `booking.*` payload-модели (source `booking`),
+  - неизвестные триггеры публикует как `calcom.<trigger>` → `events.unrouted`.
+
+- `POST /event/admin`
+  - принимает CloudEvent от админки (`user.email.*`, `booking.client_reassigned`),
+  - проверяет `Authorization: Bearer <key>` (`admin_api_key`, constant-time по токену; запрос без схемы Bearer отклоняется),
   - публикует событие в RabbitMQ.
 
 - `GET /event/*`

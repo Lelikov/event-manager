@@ -100,9 +100,10 @@ def test_default_routing_rules_booking_lifecycle() -> None:
         router.resolve_routing_key_by_fields(source="booking", event_type="booking.reassigned")
         == "events.booking.lifecycle"
     )
+    # events.booking.reminder queue was removed: reminder_sent persists via lifecycle
     assert (
         router.resolve_routing_key_by_fields(source="booking", event_type="booking.reminder_sent")
-        == "events.booking.reminder"
+        == "events.booking.lifecycle"
     )
 
 

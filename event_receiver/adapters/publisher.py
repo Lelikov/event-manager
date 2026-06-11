@@ -6,12 +6,21 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import structlog
+from aio_pika.exceptions import DeliveryError
 from cloudevents.core.bindings.http import to_binary
 from cloudevents.core.formats.json import JSONFormat
 from cloudevents.core.v1.event import CloudEvent
+from event_schemas.attributes import (
+    BOOKING_ID_ATTRIBUTE,
+    IDEMPOTENCY_KEY_ATTRIBUTE,
+    SPAN_ID_ATTRIBUTE,
+    TRACE_ID_ATTRIBUTE,
+)
+from event_schemas.queues import ALL_QUEUES, DEFAULT_ROUTING_KEY, EVENTS_DLX, QueueSpec
 from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPriority, EventType
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
 
+from event_receiver.errors import ConfigurationError, PublishUnavailableError
 from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
 from event_receiver.interfaces.users import IUserResolver
 from event_receiver.normalizers import normalize_event_payload
@@ -27,6 +36,15 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _PUBLISHED_EVENTS_LOG_FILE = Path("published_events.jsonl")
+_IDEMPOTENCY_CACHE_MAX_ENTRIES = 10_000
+
+
+def _coerce_event_type(event_type: str) -> EventType | None:
+    """Return the EventType member for a wire type string, or None if unknown."""
+    try:
+        return EventType(event_type)
+    except ValueError:
+        return None
 
 
 class CloudEventPublisher(ICloudEventPublisher):
@@ -38,6 +56,8 @@ class CloudEventPublisher(ICloudEventPublisher):
         router_by_event: IEventRouter,
         user_resolver: IUserResolver,
         getstream_decoder: Callable[[str], str] | None = None,
+        publish_timeout: float = 10.0,
+        idempotency_cache_ttl: float = 600.0,
         debug: bool = False,
     ) -> None:
         self._broker = broker
@@ -45,6 +65,9 @@ class CloudEventPublisher(ICloudEventPublisher):
         self._router_by_event = router_by_event
         self._user_resolver = user_resolver
         self._getstream_decoder = getstream_decoder
+        self._publish_timeout = publish_timeout
+        self._idempotency_cache_ttl = idempotency_cache_ttl
+        self._idempotency_cache: dict[str, float] = {}
         self._debug = debug
 
     async def publish(
@@ -60,8 +83,19 @@ class CloudEventPublisher(ICloudEventPublisher):
     ) -> None:
         # Convert EventType enum to string if needed
         event_type_str = event_type.value if isinstance(event_type, EventType) else event_type
+        event_type_enum = _coerce_event_type(event_type_str)
 
         routing_key = self._router_by_event.resolve_routing_key_by_fields(source=source, event_type=event_type_str)
+        if event_type_enum is None:
+            # Unknown type (e.g. a new GetStream webhook type): never 500 —
+            # park it in the unrouted queue with full payload for later triage.
+            routing_key = str(DEFAULT_ROUTING_KEY)
+            logger.warning(
+                "Unknown event type, routing to unrouted queue",
+                source=source,
+                event_type=event_type_str,
+                routing_key=routing_key,
+            )
         logger.debug(
             "Resolved routing key for outbound CloudEvent",
             source=source,
@@ -83,8 +117,20 @@ class CloudEventPublisher(ICloudEventPublisher):
             data=data,
         )
 
+        # Short-TTL duplicate suppression for webhook retries. The authoritative
+        # dedup is event-saver's DB constraint (booking_id, event_type, source, payload digest);
+        # this cache only avoids republishing obvious retries (e.g. caller timed out before 202).
+        if self._is_recent_duplicate(idempotency_key):
+            logger.info(
+                "Duplicate event suppressed by idempotency cache",
+                source=source,
+                event_type=event_type_str,
+                booking_id=booking_id,
+                idempotency_key=idempotency_key,
+            )
+            return
+
         # Get schema version and priority
-        event_type_enum = EventType(event_type_str) if isinstance(event_type, str) else event_type
         schema_version = EVENT_SCHEMA_VERSIONS.get(event_type_enum, "v1")
         priority = EVENT_PRIORITIES.get(event_type_enum, EventPriority.NORMAL)
 
@@ -95,24 +141,20 @@ class CloudEventPublisher(ICloudEventPublisher):
             getstream_decoder=self._getstream_decoder,
         )
 
-        # Enrich each participant with their user_id from event-users (skip if already resolved)
-        for participant in normalized_data["normalized"]["participants"]:
-            if not participant.get("user_id"):
-                user_id = await self._user_resolver.resolve_or_create(
-                    email=participant["email"],
-                    role=participant["role"],
-                )
-                if user_id:
-                    participant["user_id"] = user_id
+        await self._enrich_participants(
+            normalized_data["normalized"]["participants"],
+            event_type_str=event_type_str,
+            booking_id=booking_id,
+        )
 
         # Build CloudEvent attributes with extensions
         attributes = {
             "type": event_type_str,
             "source": source,
-            # CloudEvents extensions
-            "traceid": trace_id,
-            "spanid": span_id,
-            "idempotencykey": idempotency_key,
+            # CloudEvents extensions (canonical names from event_schemas.attributes)
+            TRACE_ID_ATTRIBUTE: trace_id,
+            SPAN_ID_ATTRIBUTE: span_id,
+            IDEMPOTENCY_KEY_ATTRIBUTE: idempotency_key,
             "dataschema": f"https://schemas.example.com/{event_type_str}/{schema_version}",
             "datacontenttype": "application/json",
             "publisherservice": "event-receiver",
@@ -126,21 +168,20 @@ class CloudEventPublisher(ICloudEventPublisher):
                 event_time = datetime.fromisoformat(event_time)
             attributes["time"] = event_time
         if booking_id:
-            attributes["bookingid"] = booking_id
+            attributes[BOOKING_ID_ATTRIBUTE] = booking_id
 
         event = CloudEvent(attributes=attributes, data=json.dumps(normalized_data).encode())
         message = to_binary(event, JSONFormat())
         headers = dict(message.headers)
 
-        await self._broker.publish(
-            message.body,
-            exchange=self._exchange,
+        await self._publish_to_broker(
+            body=message.body,
             routing_key=routing_key,
             headers=headers,
-            content_type="application/json",
-            message_type=event_type_str,
-            priority=priority.value,  # RabbitMQ priority
+            event_type_str=event_type_str,
+            priority=priority,
         )
+        self._remember_idempotency_key(idempotency_key)
         if self._debug:
             record = {
                 "ts": time.time(),
@@ -168,73 +209,161 @@ class CloudEventPublisher(ICloudEventPublisher):
             priority=priority.value,
         )
 
+    async def _enrich_participants(
+        self,
+        participants: list[dict[str, Any]],
+        *,
+        event_type_str: str,
+        booking_id: str | None,
+    ) -> None:
+        """Enrich each participant with their user_id from event-users (skip if already resolved).
+
+        Resolution failures degrade silently downstream (event-saver persists NULL user_id and
+        nothing backfills it), so every unresolved participant is surfaced as a structured warning.
+        """
+        for participant in participants:
+            if not participant.get("user_id"):
+                user_id = await self._user_resolver.resolve_or_create(
+                    email=participant["email"],
+                    role=participant.get("role"),
+                )
+                if user_id:
+                    participant["user_id"] = user_id
+
+        unresolved = [p["email"] for p in participants if not p.get("user_id")]
+        if unresolved:
+            logger.warning(
+                "Publishing event with unresolved participant user_ids (event-users degraded?)",
+                event_type=event_type_str,
+                booking_id=booking_id,
+                unresolved_emails=unresolved,
+                unresolved_count=len(unresolved),
+            )
+
+    def _is_recent_duplicate(self, idempotency_key: str) -> bool:
+        seen_at = self._idempotency_cache.get(idempotency_key)
+        if seen_at is None:
+            return False
+        return time.monotonic() - seen_at < self._idempotency_cache_ttl
+
+    def _remember_idempotency_key(self, idempotency_key: str) -> None:
+        now = time.monotonic()
+        if len(self._idempotency_cache) >= _IDEMPOTENCY_CACHE_MAX_ENTRIES:
+            self._idempotency_cache = {
+                key: seen_at
+                for key, seen_at in self._idempotency_cache.items()
+                if now - seen_at < self._idempotency_cache_ttl
+            }
+        if len(self._idempotency_cache) >= _IDEMPOTENCY_CACHE_MAX_ENTRIES:
+            self._idempotency_cache.clear()
+        self._idempotency_cache[idempotency_key] = now
+
+    async def _publish_to_broker(
+        self,
+        *,
+        body: bytes,
+        routing_key: str,
+        headers: dict[str, Any],
+        event_type_str: str,
+        priority: EventPriority,
+    ) -> None:
+        """Publish to the broker mapping confirm timeouts and returned messages to PublishUnavailableError."""
+        try:
+            await self._broker.publish(
+                body,
+                exchange=self._exchange,
+                routing_key=routing_key,
+                headers=headers,
+                content_type="application/json",
+                message_type=event_type_str,
+                priority=priority.value,  # RabbitMQ priority
+                timeout=self._publish_timeout,
+            )
+        except TimeoutError as exc:
+            logger.exception(
+                "Publish confirm timed out (broker blocked or unavailable)",
+                event_type=event_type_str,
+                routing_key=routing_key,
+                timeout=self._publish_timeout,
+            )
+            raise PublishUnavailableError("Broker did not confirm publish in time") from exc
+        except DeliveryError as exc:
+            logger.exception(
+                "Message returned by broker (unroutable or rejected)",
+                event_type=event_type_str,
+                routing_key=routing_key,
+                error=str(exc),
+            )
+            raise PublishUnavailableError(f"Broker could not route message to {routing_key!r}") from exc
+
 
 class RabbitTopologyManager(ITopologyManager):
+    """Declares the FULL canonical broker topology from event_schemas.queues.ALL_QUEUES."""
+
     def __init__(
         self,
         *,
         broker: RabbitBroker,
         exchange: RabbitExchange,
-        topology_queues: set[str],
+        queue_specs: tuple[QueueSpec, ...] = ALL_QUEUES,
+        required_destinations: frozenset[str] = frozenset(),
     ) -> None:
         self._broker = broker
         self._exchange = exchange
-        self._topology_queues = topology_queues
+        self._queue_specs = queue_specs
+        self._required_destinations = required_destinations
+
+    def _validate_destinations(self) -> None:
+        """Fail startup if a routing destination has no queue binding — otherwise publishes silently vanish."""
+        bindings = {str(spec.binding) for spec in self._queue_specs}
+        missing = self._required_destinations - bindings
+        if missing:
+            raise ConfigurationError(
+                f"Routing destinations without a bound queue: {sorted(missing)}; declared bindings: {sorted(bindings)}",
+            )
 
     async def ensure_topology(self) -> None:
+        self._validate_destinations()
         logger.info(
-            "Ensuring RabbitMQ topology with DLQ and priority support",
+            "Ensuring canonical RabbitMQ topology",
             exchange=self._exchange.name,
-            queue_count=len(self._topology_queues),
+            queue_count=len(self._queue_specs),
         )
         declared_exchange = await self._broker.declare_exchange(self._exchange)
 
-        # Declare Dead Letter Exchange
-        dlx = RabbitExchange(name="events.dlx", type=ExchangeType.TOPIC, durable=True)
+        dlx = RabbitExchange(name=EVENTS_DLX, type=ExchangeType.TOPIC, durable=True)
         declared_dlx = await self._broker.declare_exchange(dlx)
         logger.debug("Dead Letter Exchange declared", exchange=dlx.name)
 
-        for queue_name in self._topology_queues:
-            # Main queue with DLQ and priority support
+        for spec in self._queue_specs:
             main_queue = RabbitQueue(
-                name=queue_name,
+                name=spec.name,
                 durable=True,
-                routing_key=queue_name,
-                arguments={
-                    "x-max-priority": 10,  # Enable priority queues (0-10)
-                    "x-dead-letter-exchange": "events.dlx",  # DLX for failed messages
-                    "x-dead-letter-routing-key": f"{queue_name}.dlq",
-                },
+                routing_key=str(spec.binding),
+                arguments=spec.arguments,
             )
             declared_main_queue = await self._broker.declare_queue(main_queue)
-            await declared_main_queue.bind(exchange=declared_exchange, routing_key=queue_name)
+            await declared_main_queue.bind(exchange=declared_exchange, routing_key=str(spec.binding))
             logger.debug(
-                "Main queue declared with DLQ and priority",
-                queue=queue_name,
-                exchange=self._exchange.name,
-                max_priority=10,
+                "Queue declared",
+                queue=spec.name,
+                binding=str(spec.binding),
+                consumer=spec.consumer,
             )
 
-            # Dead Letter Queue (DLQ)
             dlq = RabbitQueue(
-                name=f"{queue_name}.dlq",
+                name=spec.dlq_name,
                 durable=True,
-                routing_key=f"{queue_name}.dlq",
-                arguments={
-                    "x-message-ttl": 86400000,  # 24 hours TTL for DLQ messages
-                },
+                routing_key=spec.dlq_name,
+                arguments=spec.dlq_arguments,
             )
             declared_dlq = await self._broker.declare_queue(dlq)
-            await declared_dlq.bind(exchange=declared_dlx, routing_key=f"{queue_name}.dlq")
-            logger.debug(
-                "DLQ declared",
-                dlq=f"{queue_name}.dlq",
-                ttl_hours=24,
-            )
+            await declared_dlq.bind(exchange=declared_dlx, routing_key=spec.dlq_name)
+            logger.debug("DLQ declared", dlq=spec.dlq_name)
 
         logger.info(
-            "Rabbit topology ensured with DLQ and priority support",
+            "Rabbit topology ensured",
             exchange=self._exchange.name,
             dlx=dlx.name,
-            queues=sorted(self._topology_queues),
+            queues=sorted(spec.name for spec in self._queue_specs),
         )
