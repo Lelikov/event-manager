@@ -76,30 +76,36 @@ class TestVerifySignature:
 
 
 class TestVerify:
+    def _verified_claims(self, claims: dict) -> dict:
+        """Decode-and-verify path used by production code: verify_signature then verify."""
+        verifier = _make_verifier()
+        token = _encode_token(claims)
+        return verifier.verify_signature(token=token)
+
     def test_source_claim_match(self) -> None:
         verifier = _make_verifier()
-        token = _encode_token({"source": "jitsi", "type": "conference.joined", "room": "abc"})
-        claims = verifier.verify(token=token, event_source="jitsi", event_type="conference.joined")
+        decoded = self._verified_claims({"source": "jitsi", "type": "conference.joined", "room": "abc"})
+        claims = verifier.verify(claims=decoded, event_source="jitsi", event_type="conference.joined")
         assert claims["room"] == "abc"
         assert "source" not in claims
         assert "type" not in claims
 
     def test_source_claim_mismatch_raises_unauthorized(self) -> None:
         verifier = _make_verifier()
-        token = _encode_token({"source": "jitsi", "type": "conference.joined"})
+        decoded = self._verified_claims({"source": "jitsi", "type": "conference.joined"})
         with pytest.raises(UnauthorizedError, match="source claim does not match"):
-            verifier.verify(token=token, event_source="other-source", event_type="conference.joined")
+            verifier.verify(claims=decoded, event_source="other-source", event_type="conference.joined")
 
     def test_type_claim_mismatch_raises_unauthorized(self) -> None:
         verifier = _make_verifier()
-        token = _encode_token({"source": "jitsi", "type": "conference.joined"})
+        decoded = self._verified_claims({"source": "jitsi", "type": "conference.joined"})
         with pytest.raises(UnauthorizedError, match="type claim does not match"):
-            verifier.verify(token=token, event_source="jitsi", event_type="other.type")
+            verifier.verify(claims=decoded, event_source="jitsi", event_type="other.type")
 
     def test_no_source_claim_allows_any_source(self) -> None:
         verifier = _make_verifier()
-        token = _encode_token({"room": "abc"})
-        claims = verifier.verify(token=token, event_source="anything", event_type="anything")
+        decoded = self._verified_claims({"room": "abc"})
+        claims = verifier.verify(claims=decoded, event_source="anything", event_type="anything")
         assert claims["room"] == "abc"
 
     def test_pre_decoded_claims(self) -> None:
@@ -111,7 +117,8 @@ class TestVerify:
         )
         assert claims["room"] == "r1"
 
-    def test_missing_token_and_claims_raises_unauthorized(self) -> None:
+    def test_verify_has_no_unverified_token_path(self) -> None:
+        """verify() must not accept a raw token: signature bypass path was removed."""
         verifier = _make_verifier()
-        with pytest.raises(UnauthorizedError, match="Missing authorization token"):
-            verifier.verify(event_source="x", event_type="y")
+        with pytest.raises(TypeError):
+            verifier.verify(token="some-token", event_source="x", event_type="y")  # type: ignore[call-arg]  # noqa: S106
