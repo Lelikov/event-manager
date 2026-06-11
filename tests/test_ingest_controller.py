@@ -177,3 +177,41 @@ class TestBookingIngest:
         body = json.dumps({"users": []}).encode()
         with pytest.raises(BadRequestError, match="booking_uid"):
             await controller.ingest_booking(headers=booking_cloudevent_headers(), body=body)
+
+    async def test_missing_authorization_header_raises_unauthorized(self, controller, publisher) -> None:
+        headers = booking_cloudevent_headers()
+        del headers["Authorization"]
+        with pytest.raises(UnauthorizedError):
+            await controller.ingest_booking(headers=headers, body=booking_created_body())
+        assert not publisher.published
+
+
+class TestAdminIngest:
+    def admin_headers(self, event_type: str = "user.email.change_requested") -> dict[str, str]:
+        return {
+            "Authorization": ADMIN_API_KEY,
+            "ce-specversion": "1.0",
+            "ce-id": "evt-admin-1",
+            "ce-source": "admin",
+            "ce-type": event_type,
+            "Content-Type": "application/json",
+        }
+
+    async def test_happy_path_publishes(self, controller, publisher) -> None:
+        body = json.dumps({"booking_uid": "uid-2", "old_email": "a@b.c", "new_email": "d@e.f"}).encode()
+        await controller.ingest_admin(headers=self.admin_headers(), body=body)
+        assert len(publisher.published) == 1
+        assert publisher.published[0]["booking_id"] == "uid-2"
+
+    async def test_invalid_api_key_raises_unauthorized(self, controller, publisher) -> None:
+        headers = self.admin_headers() | {"Authorization": "wrong"}
+        with pytest.raises(UnauthorizedError):
+            await controller.ingest_admin(headers=headers, body=b"{}")
+        assert not publisher.published
+
+    async def test_missing_authorization_header_raises_unauthorized(self, controller, publisher) -> None:
+        headers = self.admin_headers()
+        del headers["Authorization"]
+        with pytest.raises(UnauthorizedError):
+            await controller.ingest_admin(headers=headers, body=b"{}")
+        assert not publisher.published

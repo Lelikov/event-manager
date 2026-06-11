@@ -95,7 +95,7 @@ class IngestController(IIngestController):
         trace_id = extract_trace_id_from_headers(dict(headers))
 
         logger.info("Started Booking ingest", trace_id=trace_id)
-        if self._settings.booking_api_key != headers.get("Authorization"):
+        if not hmac.compare_digest(self._settings.booking_api_key, headers.get("Authorization", "")):
             logger.warning("Booking ingest failed: invalid API key")
             raise UnauthorizedError("Invalid Booking API key")
 
@@ -235,7 +235,7 @@ class IngestController(IIngestController):
         trace_id = extract_trace_id_from_headers(dict(headers))
         logger.info("Started Admin ingest", trace_id=trace_id)
 
-        if self._settings.admin_api_key != headers.get("Authorization"):
+        if not hmac.compare_digest(self._settings.admin_api_key, headers.get("Authorization", "")):
             logger.warning("Admin ingest failed: invalid API key")
             raise UnauthorizedError("Invalid Admin API key")
 
