@@ -28,6 +28,23 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+def _user_info(user: dict[str, Any]) -> dict[str, Any]:
+    """Build a UserInfo-shaped dict ({email, time_zone?}) from a participant entry."""
+    info: dict[str, Any] = {"email": user["email"]}
+    if user.get("time_zone"):
+        info["time_zone"] = user["time_zone"]
+    return info
+
+
+def _participant_entry(user: dict[str, Any]) -> dict[str, Any]:
+    """Build a BookingParticipant-shaped dict; guests are normalized to role 'client'."""
+    role = user.get("role")
+    entry: dict[str, Any] = {"email": user["email"], "role": "client" if role == "guest" else role}
+    if user.get("time_zone"):
+        entry["time_zone"] = user["time_zone"]
+    return entry
+
+
 class IngestController(IIngestController):
     def __init__(
         self,
@@ -155,20 +172,30 @@ class IngestController(IIngestController):
 
     @staticmethod
     def _transform_booking_created_payload(data: dict[str, Any]) -> dict[str, Any]:
-        """Transform users list from booking.created into user/client structure expected by BookingCreatedPayload."""
+        """Transform users list from booking.created into user/client structure expected by BookingCreatedPayload.
+
+        The full participant list (organizer + ALL clients/guests) is preserved under ``users``
+        so normalization downstream does not silently drop extra attendees; ``user``/``client``
+        keep the canonical primary pair. Guests are normalized to role ``client``.
+        """
         users = data.get("users", [])
         if not isinstance(users, list) or not all(isinstance(user, dict) for user in users):
             raise BadRequestError("booking.created requires a users list of objects")
         organizer = next((u for u in users if u.get("role") == "organizer"), None)
-        client = next((u for u in users if u.get("role") == "client"), None)
-        if not organizer or not client:
-            raise BadRequestError("booking.created requires organizer and client in users")
+        clients = [u for u in users if u.get("role") in ("client", "guest")]
+        if not organizer or not clients:
+            raise BadRequestError("booking.created requires organizer and at least one client in users")
         try:
             result: dict[str, Any] = {
-                "user": {"email": organizer["email"]},
-                "client": {"email": client["email"]},
+                "user": _user_info(organizer),
+                "client": _user_info(clients[0]),
                 "start_time": data["start_time"],
                 "end_time": data["end_time"],
+                "users": [
+                    _participant_entry(user)
+                    for user in users
+                    if user.get("email") and user.get("role") in ("organizer", "client", "guest")
+                ],
             }
         except KeyError as exc:
             raise BadRequestError(f"booking.created payload missing required field: {exc}") from exc

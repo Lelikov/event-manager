@@ -108,6 +108,13 @@ def _participants_from_booking_rejected(payload: dict[str, Any]) -> list[dict[st
 
 def _participants_from_booking_created(payload: dict[str, Any]) -> list[dict[str, Any]]:
     validated = BookingCreatedPayload(**payload)
+
+    users = payload.get("users")
+    if isinstance(users, list) and users:
+        participants = _booking_created_participants_from_users(users, validated)
+        if participants:
+            return participants
+
     organizer: dict[str, Any] = {
         "email": validated.user.email,
         "role": "organizer",
@@ -121,6 +128,28 @@ def _participants_from_booking_created(payload: dict[str, Any]) -> list[dict[str
     if validated.client_id:
         client["user_id"] = validated.client_id
     return [organizer, client]
+
+
+def _booking_created_participants_from_users(
+    users: list[Any],
+    validated: BookingCreatedPayload,
+) -> list[dict[str, Any]]:
+    """Emit ALL booking.created participants (organizer + every client/guest), not just the primary pair."""
+    participants: list[dict[str, Any]] = []
+    for user in users:
+        if not isinstance(user, dict) or not user.get("email"):
+            continue
+        role = user.get("role")
+        role = "client" if role == "guest" else role
+        participant: dict[str, Any] = {"email": user["email"], "role": role}
+        if user.get("time_zone"):
+            participant["time_zone"] = user["time_zone"]
+        if role == "organizer" and validated.volunteer_id and user["email"] == validated.user.email:
+            participant["user_id"] = validated.volunteer_id
+        if role == "client" and validated.client_id and user["email"] == validated.client.email:
+            participant["user_id"] = validated.client_id
+        participants.append(participant)
+    return participants
 
 
 def _participants_from_booking_reminder_sent(payload: dict[str, Any]) -> list[dict[str, Any]]:

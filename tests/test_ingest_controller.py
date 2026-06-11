@@ -208,6 +208,39 @@ class TestBookingIngest:
         with pytest.raises(BadRequestError, match="Invalid booking payload schema"):
             await controller.ingest_booking(headers=booking_cloudevent_headers(), body=body)
 
+    async def test_guests_and_extra_attendees_are_preserved(self, controller, publisher) -> None:
+        body = booking_created_body(
+            users=[
+                {"role": "organizer", "email": "org@example.com", "time_zone": "Europe/Madrid"},
+                {"role": "client", "email": "client@example.com"},
+                {"role": "guest", "email": "guest@example.com"},
+            ],
+        )
+        await controller.ingest_booking(headers=booking_cloudevent_headers(), body=body)
+        data = publisher.published[0]["data"]
+        assert data["user"] == {"email": "org@example.com", "time_zone": "Europe/Madrid"}
+        assert data["client"] == {"email": "client@example.com"}
+        assert data["users"] == [
+            {"email": "org@example.com", "role": "organizer", "time_zone": "Europe/Madrid"},
+            {"email": "client@example.com", "role": "client"},
+            {"email": "guest@example.com", "role": "client"},
+        ]
+
+    async def test_guest_can_be_the_only_client(self, controller, publisher) -> None:
+        body = booking_created_body(
+            users=[
+                {"role": "organizer", "email": "org@example.com"},
+                {"role": "guest", "email": "guest@example.com"},
+            ],
+        )
+        await controller.ingest_booking(headers=booking_cloudevent_headers(), body=body)
+        assert publisher.published[0]["data"]["client"] == {"email": "guest@example.com"}
+
+    async def test_missing_organizer_raises_bad_request(self, controller) -> None:
+        body = booking_created_body(users=[{"role": "client", "email": "client@example.com"}])
+        with pytest.raises(BadRequestError, match="organizer"):
+            await controller.ingest_booking(headers=booking_cloudevent_headers(), body=body)
+
 
 class TestJitsiIngest:
     def jitsi_headers(self) -> dict[str, str]:

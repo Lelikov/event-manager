@@ -42,6 +42,36 @@ class TestBookingCreatedNormalizer:
         assert {"email": "org@test.com", "role": "organizer"} in participants
         assert {"email": "cli@test.com", "role": "client"} in participants
 
+    def test_extracts_all_participants_from_users_list(self) -> None:
+        payload = {
+            "volunteer_id": "550e8400-e29b-41d4-a716-446655440001",
+            "client_id": "550e8400-e29b-41d4-a716-446655440002",
+            "user": {"email": "org@test.com"},
+            "client": {"email": "cli@test.com"},
+            "start_time": "2026-01-01T10:00:00Z",
+            "end_time": "2026-01-01T11:00:00Z",
+            "users": [
+                {"email": "org@test.com", "role": "organizer", "time_zone": "Europe/Madrid"},
+                {"email": "cli@test.com", "role": "client"},
+                {"email": "guest@test.com", "role": "guest"},
+            ],
+        }
+        result = normalize_event_payload(EventType.BOOKING_CREATED, payload)
+        participants = result["normalized"]["participants"]
+        assert len(participants) == 3
+        assert {
+            "email": "org@test.com",
+            "role": "organizer",
+            "time_zone": "Europe/Madrid",
+            "user_id": "550e8400-e29b-41d4-a716-446655440001",
+        } in participants
+        assert {
+            "email": "cli@test.com",
+            "role": "client",
+            "user_id": "550e8400-e29b-41d4-a716-446655440002",
+        } in participants
+        assert {"email": "guest@test.com", "role": "client"} in participants
+
     def test_preserves_original_payload(self) -> None:
         payload = {
             "volunteer_id": "550e8400-e29b-41d4-a716-446655440001",
