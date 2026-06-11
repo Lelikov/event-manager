@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`event-manager` is an ingress microservice for receiving incoming events, validating authorization/integrity, and publishing normalized CloudEvents to RabbitMQ. The codebase is in the `event_receiver` package and follows interface-driven architecture with dependency injection via **Dishka**.
+`event-receiver` is an ingress microservice for receiving incoming events, validating authorization/integrity, and publishing normalized CloudEvents to RabbitMQ. The codebase is in the `event_receiver` package and follows interface-driven architecture with dependency injection via **Dishka**.
 
 **Tech Stack**: Python 3.14, FastAPI, FastStream (RabbitMQ), Pydantic, structlog, CloudEvents
 
@@ -86,7 +86,7 @@ When adding new dependencies:
 ### Event Ingestion Flow
 
 1. HTTP request → `routes.py` endpoint
-2. JWT validation (for `/event/cloudevents`) or signature validation (for integrations)
+2. Auth validation: JWT (jitsi), HMAC signatures (unisender-go, getstream, calcom) or static API keys (booking, admin)
 3. Parse/transform event into CloudEvent format
 4. `IngestController` orchestrates validation and publishing
 5. `EventRouter` resolves routing key based on event source/type patterns
@@ -95,11 +95,12 @@ When adding new dependencies:
 
 ### HTTP Endpoints
 
-- `POST /event/cloudevents` - CloudEvents with JWT authorization
+- `POST /event/booking` - Booking service CloudEvents with API key authorization (constant-time)
+- `POST /event/calcom` - Native cal.com webhooks with `X-Cal-Signature-256` HMAC-SHA256 validation
+- `POST /event/jitsi` - Jitsi CloudEvents with JWT authorization (signature + claims)
 - `POST /event/unisender-go` - UniSender Go webhooks with MD5 signature validation
-- `POST /event/getstream` - GetStream webhooks with HMAC signature validation
-- `POST /event/booking` - Booking service events with API key authorization
-- `POST /event/jitsi` - Jitsi webhooks with API key authorization
+- `POST /event/getstream` - GetStream webhooks with HMAC-SHA256 signature validation (inline, constant-time)
+- `POST /event/admin` - Admin CloudEvents (`user.email.*`, `booking.client_reassigned`) with API key authorization
 - `GET /health` - Health check
 
 ### Error Handling Pattern
@@ -108,6 +109,7 @@ Domain errors are raised in controllers (`event_receiver/errors.py`):
 - `BadRequestError` → HTTP 400
 - `UnauthorizedError` → HTTP 401
 - `ConfigurationError` → HTTP 500
+- `PublishUnavailableError` → HTTP 503 (broker confirm timeout or unroutable return; webhook sources retry)
 
 Centralized HTTP mapping in `routes.py` ensures consistent error responses.
 

@@ -130,12 +130,11 @@ Fallback-очередь по умолчанию:
 
 ### booking.created
 - `booking_uid: str`
-- `user.email: str`
-- `user.time_zone: str`
-- `client.email: str`
-- `client.time_zone: str`
-- `start_time: datetime`
-- `end_time: datetime`
+- `users: list[{email, role: organizer|client|guest, time_zone?}]` — ровно один organizer,
+  ≥1 client/guest; guest нормализуется в role `client`; ВСЕ участники попадают
+  в `normalized.participants` (multi-attendee/seated бронирования поддерживаются)
+- исходящий payload: `user{email,time_zone?}` / `client{email,time_zone?}` (первичная пара),
+  `users[]` (полный список), `start_time: datetime`, `end_time: datetime`
 
 ### booking.rescheduled
 - `booking_uid: str`
@@ -226,4 +225,25 @@ Fallback-очередь по умолчанию:
 - event-receiver объявляет ПОЛНУЮ топологию на старте; каждый консьюмер
   идемпотентно объявляет свои очереди с теми же аргументами;
 - одна очередь = один консьюмер; fan-out — через несколько очередей на один routing key;
-- неизвестные `EventType` больше не дают 500: публикуются в `events.unrouted`.
+- неизвестные `EventType` больше не дают 500: публикуются в `events.unrouted`;
+- на старте event-receiver валидирует, что каждый routing destination имеет
+  очередь с соответствующим binding (иначе fail-fast `ConfigurationError`);
+- publish выполняется с confirm-таймаутом (`PUBLISH_TIMEOUT`, по умолчанию 10s)
+  и `on_return_raises=True`: таймаут/unroutable → HTTP 503, источник ретраит.
+
+### DLQ: окно потери 24 часа (известное ограничение)
+
+`<queue>.dlq` имеет `x-message-ttl=86400000` (24h) и НЕ имеет собственного
+dead-letter-exchange — ни один сервис не консьюмит `*.dlq`. Сообщение, попавшее
+в DLQ (nack консьюмера после ошибки парсинга/записи), безвозвратно удаляется
+через 24 часа. Аргументы каноничны в `event_schemas.queues` (CONTRACT_DECISIONS D2),
+менять их локально нельзя. Операционные требования:
+- алертинг на глубину `*.dlq` (depth > 0 — инцидент, есть максимум 24h на redrive);
+- redrive вручную: shovel/`rabbitmqadmin` из `<queue>.dlq` обратно в exchange `events`
+  с routing key `<queue>` после устранения причины nack.
+
+### Ingress cal.com (`/event/calcom`)
+
+Нативные webhooks cal.com транслируются в канонические `booking.*` события
+(source `booking` → routing rules booking lifecycle). Неизвестные `triggerEvent`
+публикуются как `calcom.<trigger>` (source `calcom`) → `events.unrouted`.

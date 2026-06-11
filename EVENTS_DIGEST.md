@@ -24,10 +24,20 @@
 | start_time       | `datetime`       |
 | end_time         | `datetime`       |
 
-`UserInfo`: `{ email: str, role: "organizer" | "client" }`
+`UserInfo`: `{ email: str, role: "organizer" | "client" | "guest", time_zone?: str }`
 
-Входящий payload содержит `users` — список с ролями `organizer` и `client`.
-`IngestController._transform_booking_created_payload()` трансформирует в `user`/`client` структуру для валидации через `BookingCreatedPayload`.
+Входящий payload содержит `users` — ровно один `organizer` и ≥1 `client`/`guest`
+(multi-attendee/seated бронирования поддерживаются; `guest` нормализуется в `client`).
+`IngestController._transform_booking_created_payload()` строит `user`/`client`
+(первичная пара) для валидации `BookingCreatedPayload` и сохраняет полный список
+в `users[]` — все участники попадают в `normalized.participants`.
+
+## calcom.* (неизвестные триггеры cal.com)
+
+`POST /event/calcom` транслирует известные `triggerEvent` cal.com в `booking.created` /
+`booking.cancelled` / `booking.rescheduled` (см. `event_receiver/calcom.py`). Любой другой
+триггер публикуется без трансформации с типом `calcom.<trigger_lowercase>` (source `calcom`)
+и попадает в `events.unrouted` (payload сохраняется в `original`).
 
 ## booking.rescheduled
 
