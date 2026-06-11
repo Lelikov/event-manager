@@ -3,12 +3,19 @@
 import base64
 import hashlib
 import json
+import os
 import uuid
 from typing import Any
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+
+_GCM_NONCE_LENGTH = 12
+_GCM_TAG_LENGTH = 16
 
 
 def generate_idempotency_key(
@@ -84,10 +91,22 @@ def extract_trace_id_from_headers(headers: dict[str, str]) -> str | None:
     return None
 
 
+def encode_getstream_user_id(*, email: str, encryption_key: bytes) -> str:
+    """Encrypt an email into a GetStream user ID using AES-GCM with a random nonce.
+
+    Output format: urlsafe-base64(nonce[12] + ciphertext + tag[16]), unpadded.
+    This is the canonical encoder; producers (event-booking) must use the same scheme.
+    """
+    nonce = os.urandom(_GCM_NONCE_LENGTH)
+    ciphertext = AESGCM(encryption_key).encrypt(nonce, email.encode(), None)
+    return base64.urlsafe_b64encode(nonce + ciphertext).rstrip(b"=").decode()
+
+
 def decode_getstream_user_id(*, encoded_user_id: str, encryption_key: bytes) -> str:
     """Decode GetStream encrypted user ID to email.
 
-    GetStream user IDs are AES-encrypted emails. This function decrypts them.
+    Tries the authenticated AES-GCM format first (random nonce prepended);
+    falls back to the legacy AES-CBC zero-IV format produced by older encoders.
 
     Args:
         encoded_user_id: Base64-encoded encrypted user ID from GetStream
@@ -105,10 +124,25 @@ def decode_getstream_user_id(*, encoded_user_id: str, encryption_key: bytes) -> 
     if padding_needed:
         encoded_user_id += "=" * (4 - padding_needed)
 
-    # Decode from base64
     encrypted_data = base64.urlsafe_b64decode(encoded_user_id)
 
-    # Decrypt using AES-CBC
+    if len(encrypted_data) > _GCM_NONCE_LENGTH + _GCM_TAG_LENGTH:
+        try:
+            return _decrypt_gcm(encrypted_data, encryption_key)
+        except (InvalidTag, ValueError):
+            pass
+
+    return _decrypt_legacy_cbc(encrypted_data, encryption_key)
+
+
+def _decrypt_gcm(encrypted_data: bytes, encryption_key: bytes) -> str:
+    nonce = encrypted_data[:_GCM_NONCE_LENGTH]
+    ciphertext = encrypted_data[_GCM_NONCE_LENGTH:]
+    return AESGCM(encryption_key).decrypt(nonce, ciphertext, None).decode()
+
+
+def _decrypt_legacy_cbc(encrypted_data: bytes, encryption_key: bytes) -> str:
+    """Decrypt the legacy AES-CBC zero-IV format (no integrity; kept for old encoders only)."""
     cipher = Cipher(
         algorithms.AES(encryption_key),
         modes.CBC(b"\x00" * 16),
@@ -117,7 +151,6 @@ def decode_getstream_user_id(*, encoded_user_id: str, encryption_key: bytes) -> 
     decryptor = cipher.decryptor()
     padded_data = decryptor.update(encrypted_data) + decryptor.finalize()
 
-    # Remove PKCS7 padding
     unpadder = padding.PKCS7(128).unpadder()
     decoded_data = unpadder.update(padded_data) + unpadder.finalize()
 
