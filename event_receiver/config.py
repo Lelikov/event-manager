@@ -61,6 +61,7 @@ class Settings(BaseSettings):
 
     rabbit_url: AmqpDsn = "amqp://guest:guest@localhost:5672/"
     rabbit_exchange: str = "events"
+    publish_timeout: float = 10.0
     default_rabbit_destination: str = "events.unrouted"
     event_routing_rules: list[RouteRule] = Field(default_factory=_default_route_rules)
 

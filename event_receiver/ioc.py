@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator, Callable
 
 import structlog
 from dishka import Provider, Scope, provide
-from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, fastapi
+from faststream.rabbit import Channel, ExchangeType, RabbitBroker, RabbitExchange, fastapi
 from httpx import AsyncClient
 
 from event_receiver.adapters import CloudEventPublisher, RabbitTopologyManager, UserResolver
@@ -43,7 +43,11 @@ class AppProvider(Provider):
             rabbit_port=settings.rabbit_url.port,
             rabbit_vhost=settings.rabbit_url.path,
         )
-        return fastapi.RabbitRouter(str(settings.rabbit_url))
+        # on_return_raises=True: unroutable mandatory publishes raise instead of being silently dropped
+        return fastapi.RabbitRouter(
+            str(settings.rabbit_url),
+            default_channel=Channel(on_return_raises=True),
+        )
 
     @provide(scope=Scope.APP)
     def provide_broker(self, router: fastapi.RabbitRouter) -> RabbitBroker:
@@ -120,12 +124,14 @@ class AppProvider(Provider):
             router_by_event=event_router,
             user_resolver=user_resolver,
             getstream_decoder=getstream_decoder,
+            publish_timeout=settings.publish_timeout,
             debug=settings.debug,
         )
 
     @provide(scope=Scope.APP)
     def provide_topology_manager(
         self,
+        settings: Settings,
         broker: RabbitBroker,
         exchange: RabbitExchange,
     ) -> ITopologyManager:
@@ -133,6 +139,7 @@ class AppProvider(Provider):
         return RabbitTopologyManager(
             broker=broker,
             exchange=exchange,
+            required_destinations=frozenset(settings.routing_destinations),
         )
 
     @provide(scope=Scope.APP)

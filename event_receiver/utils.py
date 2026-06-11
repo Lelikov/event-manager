@@ -129,7 +129,7 @@ def decode_getstream_user_id(*, encoded_user_id: str, encryption_key: bytes) -> 
     if len(encrypted_data) > _GCM_NONCE_LENGTH + _GCM_TAG_LENGTH:
         try:
             return _decrypt_gcm(encrypted_data, encryption_key)
-        except (InvalidTag, ValueError):
+        except InvalidTag, ValueError:
             pass
 
     return _decrypt_legacy_cbc(encrypted_data, encryption_key)

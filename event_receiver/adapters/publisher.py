@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import structlog
+from aio_pika.exceptions import DeliveryError
 from cloudevents.core.bindings.http import to_binary
 from cloudevents.core.formats.json import JSONFormat
 from cloudevents.core.v1.event import CloudEvent
@@ -19,6 +20,7 @@ from event_schemas.queues import ALL_QUEUES, DEFAULT_ROUTING_KEY, EVENTS_DLX, Qu
 from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPriority, EventType
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
 
+from event_receiver.errors import ConfigurationError, PublishUnavailableError
 from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
 from event_receiver.interfaces.users import IUserResolver
 from event_receiver.normalizers import normalize_event_payload
@@ -53,6 +55,7 @@ class CloudEventPublisher(ICloudEventPublisher):
         router_by_event: IEventRouter,
         user_resolver: IUserResolver,
         getstream_decoder: Callable[[str], str] | None = None,
+        publish_timeout: float = 10.0,
         debug: bool = False,
     ) -> None:
         self._broker = broker
@@ -60,6 +63,7 @@ class CloudEventPublisher(ICloudEventPublisher):
         self._router_by_event = router_by_event
         self._user_resolver = user_resolver
         self._getstream_decoder = getstream_decoder
+        self._publish_timeout = publish_timeout
         self._debug = debug
 
     async def publish(
@@ -157,14 +161,12 @@ class CloudEventPublisher(ICloudEventPublisher):
         message = to_binary(event, JSONFormat())
         headers = dict(message.headers)
 
-        await self._broker.publish(
-            message.body,
-            exchange=self._exchange,
+        await self._publish_to_broker(
+            body=message.body,
             routing_key=routing_key,
             headers=headers,
-            content_type="application/json",
-            message_type=event_type_str,
-            priority=priority.value,  # RabbitMQ priority
+            event_type_str=event_type_str,
+            priority=priority,
         )
         if self._debug:
             record = {
@@ -193,6 +195,44 @@ class CloudEventPublisher(ICloudEventPublisher):
             priority=priority.value,
         )
 
+    async def _publish_to_broker(
+        self,
+        *,
+        body: bytes,
+        routing_key: str,
+        headers: dict[str, Any],
+        event_type_str: str,
+        priority: EventPriority,
+    ) -> None:
+        """Publish to the broker mapping confirm timeouts and returned messages to PublishUnavailableError."""
+        try:
+            await self._broker.publish(
+                body,
+                exchange=self._exchange,
+                routing_key=routing_key,
+                headers=headers,
+                content_type="application/json",
+                message_type=event_type_str,
+                priority=priority.value,  # RabbitMQ priority
+                timeout=self._publish_timeout,
+            )
+        except TimeoutError as exc:
+            logger.exception(
+                "Publish confirm timed out (broker blocked or unavailable)",
+                event_type=event_type_str,
+                routing_key=routing_key,
+                timeout=self._publish_timeout,
+            )
+            raise PublishUnavailableError("Broker did not confirm publish in time") from exc
+        except DeliveryError as exc:
+            logger.exception(
+                "Message returned by broker (unroutable or rejected)",
+                event_type=event_type_str,
+                routing_key=routing_key,
+                error=str(exc),
+            )
+            raise PublishUnavailableError(f"Broker could not route message to {routing_key!r}") from exc
+
 
 class RabbitTopologyManager(ITopologyManager):
     """Declares the FULL canonical broker topology from event_schemas.queues.ALL_QUEUES."""
@@ -203,12 +243,24 @@ class RabbitTopologyManager(ITopologyManager):
         broker: RabbitBroker,
         exchange: RabbitExchange,
         queue_specs: tuple[QueueSpec, ...] = ALL_QUEUES,
+        required_destinations: frozenset[str] = frozenset(),
     ) -> None:
         self._broker = broker
         self._exchange = exchange
         self._queue_specs = queue_specs
+        self._required_destinations = required_destinations
+
+    def _validate_destinations(self) -> None:
+        """Fail startup if a routing destination has no queue binding — otherwise publishes silently vanish."""
+        bindings = {str(spec.binding) for spec in self._queue_specs}
+        missing = self._required_destinations - bindings
+        if missing:
+            raise ConfigurationError(
+                f"Routing destinations without a bound queue: {sorted(missing)}; declared bindings: {sorted(bindings)}",
+            )
 
     async def ensure_topology(self) -> None:
+        self._validate_destinations()
         logger.info(
             "Ensuring canonical RabbitMQ topology",
             exchange=self._exchange.name,
