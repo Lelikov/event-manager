@@ -45,7 +45,7 @@ class IngestController(IIngestController):
     async def ingest_jitsi(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
 
-        logger.info("Started Jitsi ingest", body=body, trace_id=trace_id)
+        logger.info("Started Jitsi ingest", trace_id=trace_id)
         token = headers.get("Authorization")
         if not token:
             raise UnauthorizedError("Missing Authorization header")
@@ -94,7 +94,7 @@ class IngestController(IIngestController):
         # Extract trace_id from HTTP headers
         trace_id = extract_trace_id_from_headers(dict(headers))
 
-        logger.info("Started Booking ingest", body=body, trace_id=trace_id)
+        logger.info("Started Booking ingest", trace_id=trace_id)
         if self._settings.booking_api_key != headers.get("Authorization"):
             logger.warning("Booking ingest failed: invalid API key")
             raise UnauthorizedError("Invalid Booking API key")
@@ -173,7 +173,7 @@ class IngestController(IIngestController):
     async def ingest_unisender_go(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
 
-        logger.info("Started UniSender Go ingest", body=body, trace_id=trace_id)
+        logger.info("Started UniSender Go ingest", trace_id=trace_id)
 
         if not body:
             logger.warning("UniSender Go ingest failed: empty request body")
