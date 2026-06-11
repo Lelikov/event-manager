@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import time
 from contextlib import asynccontextmanager
 from logging import INFO, getLevelNamesMapping
@@ -102,17 +101,23 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None]:
     logger.info("Event receiver application shutdown complete")
 
 
-app = FastAPI(title="event-receiver", version="0.1.0", lifespan=lifespan)
-app.include_router(root_router)
+def create_app(settings: Settings | None = None) -> FastAPI:
+    """Build the FastAPI application; all middleware gating flows through Settings (.env included)."""
+    settings = settings if settings is not None else Settings()
 
-app.add_middleware(ContainerMiddleware)
+    application = FastAPI(title="event-receiver", version="0.1.0", lifespan=lifespan)
+    application.include_router(root_router)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    application.add_middleware(ContainerMiddleware)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins_list,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    if settings.debug:
+        application.add_middleware(RequestLoggerMiddleware)
+    return application
 
-if os.getenv("DEBUG", "").lower() in ("1", "true", "yes"):
-    app.add_middleware(RequestLoggerMiddleware)
+
+app = create_app()

@@ -33,6 +33,7 @@ class Settings(BaseSettings):
 
     debug: bool = False
     log_level: str = "INFO"
+    cors_origins: str = "http://localhost:5173"
 
     rabbit_url: AmqpDsn = "amqp://guest:guest@localhost:5672/"
     rabbit_exchange: str = "events"
@@ -64,6 +65,10 @@ class Settings(BaseSettings):
             return normalized
         logger.warning("Unknown LOG_LEVEL value, defaulting to INFO", log_level=value)
         return "INFO"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @property
     def routing_destinations(self) -> set[str]:
