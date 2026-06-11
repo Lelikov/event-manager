@@ -7,6 +7,7 @@
 | Queue | Source Pattern | Type Pattern | Events |
 |---|---|---|---|
 | `events.booking.lifecycle` (routing key) | `booking` | `booking.created` / `booking.rescheduled` / `booking.reassigned` / `booking.cancelled` / `booking.rejected` / `booking.reminder_sent` | lifecycle бронирования |
+| `events.booking.lifecycle` (routing key) | `admin` | `booking.client_reassigned` | смена клиента администратором (через `POST /event/admin`) |
 | `events.chat.lifecycle` | `booking` | `chat.created` / `chat.deleted` | lifecycle чата |
 | `events.chat.activity` | `booking` | `chat.message_sent` | активность в чате |
 | `events.meeting.lifecycle` | `booking` | `meeting.url_created` / `meeting.url_deleted` | lifecycle meeting URL |
@@ -28,6 +29,8 @@
 - `booking.cancelled`
 - `booking.rejected` — (от event-booking при нарушении constraint validation)
 - `booking.reminder_sent` — (зарезервировано, продюсера сейчас нет)
+- `booking.client_reassigned` — (source `admin`, от event-admin через `POST /event/admin`;
+  см. `docs/architecture/MESSAGE_CONTRACTS.md`)
 
 К routing key `events.booking.lifecycle` привязаны ДВЕ очереди (fan-out, по одной на консьюмера):
 - `events.booking.lifecycle.saver` — event-saver
