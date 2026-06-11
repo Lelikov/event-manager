@@ -37,7 +37,12 @@ class AppProvider(Provider):
 
     @provide(scope=Scope.APP)
     def provide_faststream_router(self, settings: Settings) -> fastapi.RabbitRouter:
-        logger.info("Creating FastStream RabbitRouter", rabbit_url=settings.rabbit_url)
+        logger.info(
+            "Creating FastStream RabbitRouter",
+            rabbit_host=settings.rabbit_url.host,
+            rabbit_port=settings.rabbit_url.port,
+            rabbit_vhost=settings.rabbit_url.path,
+        )
         return fastapi.RabbitRouter(str(settings.rabbit_url))
 
     @provide(scope=Scope.APP)
