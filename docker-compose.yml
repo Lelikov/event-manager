@@ -9,8 +9,9 @@ services:
 
   event_receiver:
     build:
-      context: .
-      dockerfile: Dockerfile
+      # monorepo root: event-schemas is a relative path dependency
+      context: ..
+      dockerfile: event-receiver/Dockerfile
     restart: always
     env_file: .env
     ports:
