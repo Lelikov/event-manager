@@ -206,6 +206,29 @@ Readiness probe (k8s `readinessProbe`): pings the RabbitMQ connection (5s timeou
 
 ---
 
+### GET /metrics
+
+**Source**: `routes.py` / `metrics.py`
+
+**Authentication**: None
+
+Prometheus exposition endpoint (`prometheus_client.generate_latest`). `/metrics` and `/health`
+requests are excluded from the RED counters.
+
+**Response**: `200 OK`, content type `text/plain; version=0.0.4; charset=utf-8`.
+
+**Exposed metrics**:
+
+| Metric | Type | Labels |
+|---|---|---|
+| `http_requests_total` | counter | `method`, `route` (route template, `unmatched` for 404s), `status` |
+| `http_request_duration_seconds` | histogram | `method`, `route` |
+| `receiver_webhooks_total` | counter | `source` (booking/calcom/getstream/jitsi/unisender-go/admin), `result` (accepted/bad_request/unauthorized/config_error/publish_unavailable/error) |
+| `receiver_publish_failures_total` | counter | `reason` (confirm_timeout/unroutable) |
+| `receiver_unknown_event_types_total` | counter | `source` |
+
+---
+
 ## RabbitMQ Messages Published
 
 All messages are published via `CloudEventPublisher.publish()` in `adapters/publisher.py:37-133`.

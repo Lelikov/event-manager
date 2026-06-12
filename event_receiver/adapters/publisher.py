@@ -20,6 +20,7 @@ from event_schemas.queues import ALL_QUEUES, DEFAULT_ROUTING_KEY, EVENTS_DLX, Qu
 from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPriority, EventType
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
 
+from event_receiver import metrics
 from event_receiver.errors import ConfigurationError, PublishUnavailableError
 from event_receiver.interfaces.publisher import ICloudEventPublisher, ITopologyManager
 from event_receiver.interfaces.users import IUserResolver
@@ -90,6 +91,7 @@ class CloudEventPublisher(ICloudEventPublisher):
             # Unknown type (e.g. a new GetStream webhook type): never 500 —
             # park it in the unrouted queue with full payload for later triage.
             routing_key = str(DEFAULT_ROUTING_KEY)
+            metrics.UNKNOWN_EVENT_TYPES_TOTAL.labels(source=source).inc()
             logger.warning(
                 "Unknown event type, routing to unrouted queue",
                 source=source,
@@ -280,6 +282,7 @@ class CloudEventPublisher(ICloudEventPublisher):
                 timeout=self._publish_timeout,
             )
         except TimeoutError as exc:
+            metrics.PUBLISH_FAILURES_TOTAL.labels(reason="confirm_timeout").inc()
             logger.exception(
                 "Publish confirm timed out (broker blocked or unavailable)",
                 event_type=event_type_str,
@@ -288,6 +291,7 @@ class CloudEventPublisher(ICloudEventPublisher):
             )
             raise PublishUnavailableError("Broker did not confirm publish in time") from exc
         except DeliveryError as exc:
+            metrics.PUBLISH_FAILURES_TOTAL.labels(reason="unroutable").inc()
             logger.exception(
                 "Message returned by broker (unroutable or rejected)",
                 event_type=event_type_str,

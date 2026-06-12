@@ -19,6 +19,7 @@ from event_receiver.config import Settings
 from event_receiver.interfaces.publisher import ITopologyManager
 from event_receiver.ioc import AppProvider
 from event_receiver.logger import setup_logger
+from event_receiver.metrics import HttpMetricsMiddleware
 from event_receiver.routes import root_router
 
 
@@ -117,6 +118,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     if settings.debug:
         application.add_middleware(RequestLoggerMiddleware)
+    application.add_middleware(HttpMetricsMiddleware)
     return application
 
 

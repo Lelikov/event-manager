@@ -103,6 +103,7 @@ When adding new dependencies:
 - `POST /event/admin` - Admin CloudEvents (`user.email.*`, `booking.client_reassigned`) with `Authorization: Bearer <key>` (constant-time)
 - `GET /health` - Liveness probe (no dependency calls)
 - `GET /ready` - Readiness probe (RabbitMQ connection ping; 503 when down)
+- `GET /metrics` - Prometheus exposition (`metrics.py`): HTTP RED (`http_requests_total`, `http_request_duration_seconds` by route template), `receiver_webhooks_total{source,result}`, `receiver_publish_failures_total{reason}`, `receiver_unknown_event_types_total{source}`
 
 ### Error Handling Pattern
 

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from faststream.rabbit import RabbitBroker
 
+from event_receiver import metrics
 from event_receiver.errors import (
     BadRequestError,
     ConfigurationError,
@@ -29,6 +30,21 @@ INGEST_ROUTE_TO_METHOD = {
     "/event/unisender-go": "ingest_unisender_go",
     "/event/admin": "ingest_admin",
 }
+
+INGEST_ERROR_RESULTS = {
+    BadRequestError: "bad_request",
+    UnauthorizedError: "unauthorized",
+    ConfigurationError: "config_error",
+    PublishUnavailableError: "publish_unavailable",
+}
+
+
+def _webhook_source(route_path: str) -> str:
+    return route_path.removeprefix("/event/")
+
+
+def _webhook_result(exc: IngestError) -> str:
+    return INGEST_ERROR_RESULTS.get(type(exc), "error")
 
 
 def _raise_http_from_ingest_error(exc: IngestError) -> None:
@@ -58,14 +74,17 @@ async def _handle_ingest_request(
         return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
 
     logger.info("Received ingest request", path=request.url.path, method=request.method)
+    source = _webhook_source(request.url.path)
 
     try:
         controller_method = getattr(ingest_controller, controller_method_name)
         await controller_method(headers=request.headers, body=await request.body())
         logger.info("Ingest request accepted", path=request.url.path, controller_method=controller_method_name)
     except IngestError as exc:
+        metrics.WEBHOOKS_TOTAL.labels(source=source, result=_webhook_result(exc)).inc()
         _raise_http_from_ingest_error(exc)
 
+    metrics.WEBHOOKS_TOTAL.labels(source=source, result="accepted").inc()
     return None
 
 
@@ -93,6 +112,12 @@ def _register_ingest_routes() -> None:
 
 
 _register_ingest_routes()
+
+
+@root_router.get("/metrics")
+async def metrics_endpoint() -> Any:
+    """Prometheus exposition endpoint."""
+    return metrics.metrics_response()
 
 
 @root_router.get("/health")
