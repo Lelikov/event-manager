@@ -101,7 +101,8 @@ When adding new dependencies:
 - `POST /event/unisender-go` - UniSender Go webhooks with MD5 signature validation
 - `POST /event/getstream` - GetStream webhooks with HMAC-SHA256 signature validation (inline, constant-time)
 - `POST /event/admin` - Admin CloudEvents (`user.email.*`, `booking.client_reassigned`) with `Authorization: Bearer <key>` (constant-time)
-- `GET /health` - Health check
+- `GET /health` - Liveness probe (no dependency calls)
+- `GET /ready` - Readiness probe (RabbitMQ connection ping; 503 when down)
 
 ### Error Handling Pattern
 

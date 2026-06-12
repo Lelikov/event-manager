@@ -173,13 +173,35 @@ rejected with 401. Senders: event-admin `EventPublisherClient`, event-notifier `
 
 ### GET /health
 
-**Source**: `routes.py:84-87`
+**Source**: `routes.py`
 
 **Authentication**: None
+
+Liveness probe (k8s `livenessProbe`): confirms the process serves HTTP. Never calls dependencies.
 
 **Response**: `200 OK`
 ```json
 {"status": "ok"}
+```
+
+---
+
+### GET /ready
+
+**Source**: `routes.py`
+
+**Authentication**: None
+
+Readiness probe (k8s `readinessProbe`): pings the RabbitMQ connection (5s timeout).
+
+**Response**: `200 OK`
+```json
+{"status": "ready", "checks": {"rabbitmq": true}}
+```
+
+**Response**: `503 Service Unavailable` (RabbitMQ down)
+```json
+{"status": "not_ready", "checks": {"rabbitmq": false}}
 ```
 
 ---

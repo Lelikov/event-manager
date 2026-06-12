@@ -4,6 +4,7 @@ import structlog
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from faststream.rabbit import RabbitBroker
 
 from event_receiver.errors import (
     BadRequestError,
@@ -17,6 +18,8 @@ from event_receiver.interfaces.ingest import IIngestController
 
 root_router = APIRouter(route_class=DishkaRoute)
 logger = structlog.get_logger(__name__)
+
+READY_CHECK_TIMEOUT_SECONDS = 5.0
 
 INGEST_ROUTE_TO_METHOD = {
     "/event/booking": "ingest_booking",
@@ -94,5 +97,24 @@ _register_ingest_routes()
 
 @root_router.get("/health")
 async def health() -> dict[str, str]:
+    """Liveness probe: the process is up and serving HTTP. No dependency calls."""
     logger.debug("Health check requested")
     return {"status": "ok"}
+
+
+@root_router.get("/ready")
+async def ready(broker: FromDishka[RabbitBroker]) -> JSONResponse:
+    """Readiness probe: verifies the RabbitMQ connection (the only critical dependency)."""
+    rabbit_ok = False
+    try:
+        rabbit_ok = await broker.ping(timeout=READY_CHECK_TIMEOUT_SECONDS)
+    except Exception:
+        logger.exception("Readiness check failed: RabbitMQ unreachable")
+
+    checks = {"rabbitmq": rabbit_ok}
+    if not rabbit_ok:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "not_ready", "checks": checks},
+        )
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ready", "checks": checks})
