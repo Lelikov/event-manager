@@ -19,6 +19,7 @@ from event_schemas.attributes import (
 from event_schemas.queues import ALL_QUEUES, DEFAULT_ROUTING_KEY, EVENTS_DLX, QueueSpec
 from event_schemas.types import EVENT_PRIORITIES, EVENT_SCHEMA_VERSIONS, EventPriority, EventType
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitQueue
+from opentelemetry import trace
 
 from event_receiver import metrics
 from event_receiver.errors import ConfigurationError, PublishUnavailableError
@@ -109,15 +110,12 @@ class CloudEventPublisher(ICloudEventPublisher):
         )
 
         # Generate tracing IDs — prefer the active span's W3C ids when present
-        from opentelemetry import trace as _trace
-
-        _span_ctx = _trace.get_current_span().get_span_context()
+        _span_ctx = trace.get_current_span().get_span_context()
+        trace_id = trace_id or generate_trace_id()
+        span_id = generate_span_id()
         if _span_ctx.is_valid:
             trace_id = format(_span_ctx.trace_id, "032x")
             span_id = format(_span_ctx.span_id, "016x")
-        else:
-            trace_id = trace_id or generate_trace_id()
-            span_id = generate_span_id()
 
         # Generate idempotency key
         idempotency_key = generate_idempotency_key(

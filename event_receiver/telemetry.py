@@ -39,8 +39,8 @@ def instrument_fastapi(app: object) -> None:
     """Auto-instrument the FastAPI app (server spans + traceparent extraction) and httpx clients."""
     if _disabled():
         return
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: PLC0415
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor  # noqa: PLC0415
 
     FastAPIInstrumentor.instrument_app(app)
     HTTPXClientInstrumentor().instrument()
@@ -50,7 +50,7 @@ def instrument_asyncpg() -> None:
     """Auto-instrument asyncpg (DB query spans). Call only from services with a database."""
     if _disabled():
         return
-    from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
+    from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor  # noqa: PLC0415
 
     AsyncPGInstrumentor().instrument()
 
@@ -59,12 +59,16 @@ def rabbit_telemetry_middlewares() -> list:
     """FastStream RabbitMQ telemetry middleware(s) — span creation + traceparent over AMQP."""
     if _disabled():
         return []
-    from faststream.rabbit.opentelemetry import RabbitTelemetryMiddleware
+    from faststream.rabbit.opentelemetry import RabbitTelemetryMiddleware  # noqa: PLC0415
 
     return [RabbitTelemetryMiddleware(tracer_provider=trace.get_tracer_provider())]
 
 
-def add_otel_trace_context(_logger, _method_name, event_dict):
+def add_otel_trace_context(
+    _logger: object,
+    _method_name: str,
+    event_dict: dict[str, object],
+) -> dict[str, object]:
     """Structlog processor: stamp the active span's W3C trace/span id onto every log line."""
     span_context = trace.get_current_span().get_span_context()
     if span_context.is_valid:
