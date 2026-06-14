@@ -3,6 +3,10 @@
 import os
 
 
+# Tracing is a no-op in the suite by default — never attempt to export spans.
+# tests/test_telemetry.py re-enables the SDK for itself via an autouse fixture.
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+
 _TEST_ENV_DEFAULTS = {
     "DEBUG": "true",
     "AUTHORIZATION_JWT_VERIFY_KEY": "jwt-verify-key-0123456789abcdef",

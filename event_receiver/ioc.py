@@ -16,6 +16,7 @@ from event_receiver.interfaces.security import IAuthorizationJWTVerifier
 from event_receiver.interfaces.users import IUserResolver
 from event_receiver.routing import EventRouter
 from event_receiver.security import AuthorizationJWTConfig, AuthorizationJWTVerifier
+from event_receiver.telemetry import rabbit_telemetry_middlewares
 from event_receiver.utils import decode_getstream_user_id
 
 
@@ -47,6 +48,7 @@ class AppProvider(Provider):
         return fastapi.RabbitRouter(
             str(settings.rabbit_url),
             default_channel=Channel(on_return_raises=True),
+            middlewares=[*rabbit_telemetry_middlewares()],
         )
 
     @provide(scope=Scope.APP)

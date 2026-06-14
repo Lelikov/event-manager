@@ -108,9 +108,16 @@ class CloudEventPublisher(ICloudEventPublisher):
             has_trace_id=trace_id is not None,
         )
 
-        # Generate tracing IDs
-        trace_id = trace_id or generate_trace_id()
-        span_id = generate_span_id()
+        # Generate tracing IDs — prefer the active span's W3C ids when present
+        from opentelemetry import trace as _trace
+
+        _span_ctx = _trace.get_current_span().get_span_context()
+        if _span_ctx.is_valid:
+            trace_id = format(_span_ctx.trace_id, "032x")
+            span_id = format(_span_ctx.span_id, "016x")
+        else:
+            trace_id = trace_id or generate_trace_id()
+            span_id = generate_span_id()
 
         # Generate idempotency key
         idempotency_key = generate_idempotency_key(

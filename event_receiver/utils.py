@@ -4,7 +4,6 @@ import base64
 import hashlib
 import json
 import os
-import uuid
 from typing import Any
 
 from cryptography.exceptions import InvalidTag
@@ -40,23 +39,13 @@ def generate_idempotency_key(
 
 
 def generate_trace_id() -> str:
-    """Generate new trace ID for distributed tracing.
-
-    Returns:
-        UUID v4 as string
-
-    """
-    return str(uuid.uuid4())
+    """W3C trace id: 32 lowercase hex chars (128-bit)."""
+    return os.urandom(16).hex()
 
 
 def generate_span_id() -> str:
-    """Generate new span ID for distributed tracing.
-
-    Returns:
-        UUID v4 as string
-
-    """
-    return str(uuid.uuid4())
+    """W3C span id: 16 lowercase hex chars (64-bit)."""
+    return os.urandom(8).hex()
 
 
 def extract_trace_id_from_headers(headers: dict[str, str]) -> str | None:

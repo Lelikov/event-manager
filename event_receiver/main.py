@@ -107,6 +107,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings if settings is not None else Settings()
 
     application = FastAPI(title="event-receiver", version="0.1.0", lifespan=lifespan)
+
+    from event_receiver.telemetry import instrument_fastapi, setup_tracing
+
+    setup_tracing()
+    instrument_fastapi(application)
+
     application.include_router(root_router)
 
     application.add_middleware(ContainerMiddleware)

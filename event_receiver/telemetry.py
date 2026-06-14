@@ -65,7 +65,7 @@ def rabbit_telemetry_middlewares() -> list:
 
 
 def add_otel_trace_context(_logger, _method_name, event_dict):
-    """structlog processor: stamp the active span's W3C trace/span id onto every log line."""
+    """Structlog processor: stamp the active span's W3C trace/span id onto every log line."""
     span_context = trace.get_current_span().get_span_context()
     if span_context.is_valid:
         event_dict["trace_id"] = format(span_context.trace_id, "032x")
