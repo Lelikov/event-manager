@@ -10,6 +10,7 @@ import ujson
 from cloudevents.v1.pydantic.v2.conversion import from_http
 from event_schemas.booking import BookingCreatedPayload
 from event_schemas.types import EventType
+from opentelemetry import trace
 from pydantic import ValidationError
 
 from event_receiver.calcom import CALCOM_SIGNATURE_HEADER, transform_calcom_webhook
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
 
 
 logger = structlog.get_logger(__name__)
+
+_tracer = trace.get_tracer(__name__)
 
 
 def _user_info(user: dict[str, Any]) -> dict[str, Any]:
@@ -181,12 +184,14 @@ class IngestController(IIngestController):
         trace_id = extract_trace_id_from_headers(dict(headers))
         logger.info("Started cal.com ingest", trace_id=trace_id)
 
-        signature = headers.get(CALCOM_SIGNATURE_HEADER) or headers.get("X-Cal-Signature-256")
-        if signature is None:
-            raise UnauthorizedError("Missing X-Cal-Signature-256 header")
-        if not self._is_valid_calcom_signature(body=body, signature=signature):
-            logger.warning("cal.com webhook failed: invalid signature")
-            raise UnauthorizedError("Invalid cal.com webhook signature")
+        with _tracer.start_as_current_span("receiver.validate_webhook") as span:
+            span.set_attribute("source", "calcom")
+            signature = headers.get(CALCOM_SIGNATURE_HEADER) or headers.get("X-Cal-Signature-256")
+            if signature is None:
+                raise UnauthorizedError("Missing X-Cal-Signature-256 header")
+            if not self._is_valid_calcom_signature(body=body, signature=signature):
+                logger.warning("cal.com webhook failed: invalid signature")
+                raise UnauthorizedError("Invalid cal.com webhook signature")
 
         webhook = self._parse_json_body(body)
         event = transform_calcom_webhook(webhook)
