@@ -109,6 +109,12 @@ graph TD
     PUBLISHER -->|Publish CloudEvent| RABBIT
 ```
 
+## Observability
+
+**Metrics:** `GET /metrics` — HTTP RED (`http_requests_total`, `http_request_duration_seconds` by route template), `receiver_webhooks_total{source,result}`, `receiver_publish_failures_total{reason}`, `receiver_unknown_event_types_total{source}`.
+
+**Tracing:** OpenTelemetry auto-instrumentation (FastAPI, httpx, RabbitMQ via FastStream middleware) + manual span `receiver.validate_webhook`; exported via OTLP/gRPC to the collector → Tempo; gated by `OTEL_SDK_DISABLED` (off by default). W3C `traceparent` is injected on every RabbitMQ publish alongside the `ce-*` headers; `ce-traceid`/`ce-spanid` are derived from the active span.
+
 ## Known Limitations (audit-v2, 2026-06-11)
 
 All findings of the 2026-06-11 audit were fixed (see `docs/AUDIT.md`). Remaining accepted limitations:
