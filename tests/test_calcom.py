@@ -96,7 +96,7 @@ class TestCalcomBookingCreated:
         await controller.ingest_calcom(headers=calcom_headers(body), body=body)
         assert len(publisher.published) == 1
         published = publisher.published[0]
-        assert str(published["event_type"]) in ("booking.created", "EventType.BOOKING_CREATED")
+        assert str(published["event_type"]) == "booking.created"
         assert published["source"] == "booking"
         assert published["booking_id"] == "n3FHda8Cpy48QW4JZX9th7"
         assert published["event_time"] == "2026-05-12T22:01:35.000Z"
@@ -156,7 +156,7 @@ class TestCalcomBookingCancelled:
         body = calcom_body("BOOKING_CANCELLED", payload)
         await controller.ingest_calcom(headers=calcom_headers(body), body=body)
         published = publisher.published[0]
-        assert str(published["event_type"]) in ("booking.cancelled", "EventType.BOOKING_CANCELLED")
+        assert str(published["event_type"]) == "booking.cancelled"
         assert published["booking_id"] == "n3FHda8Cpy48QW4JZX9th7"
         data = published["data"]
         assert data["cancellation_reason"] == "Причина отмены"
