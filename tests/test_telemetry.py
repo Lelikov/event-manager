@@ -36,3 +36,15 @@ def test_log_processor_adds_trace_id_for_active_span() -> None:
 def test_log_processor_skips_when_no_span() -> None:
     event_dict = add_otel_trace_context(None, "info", {"event": "hi"})
     assert "trace_id" not in event_dict
+
+
+def test_sentry_trace_propagator_extracts_trace_id():
+    from opentelemetry import trace
+    from event_receiver.telemetry import SentryTracePropagator
+
+    carrier = {"sentry-trace": "0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-1"}
+    ctx = SentryTracePropagator().extract(carrier)
+    span_context = trace.get_current_span(ctx).get_span_context()
+    assert span_context.is_valid
+    assert span_context.trace_id == 0x0AF7651916CD43DD8448EB211C80319C
+    assert span_context.is_remote
