@@ -67,7 +67,7 @@ class IngestController(IIngestController):
     async def ingest_jitsi(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
 
-        logger.info("Started Jitsi ingest", trace_id=trace_id)
+        logger.info("Started Jitsi ingest")
         token = headers.get("Authorization")
         if not token:
             raise UnauthorizedError("Missing Authorization header")
@@ -85,7 +85,6 @@ class IngestController(IIngestController):
             source=incoming.source,
             event_type=incoming.type,
             event_id=incoming.id,
-            trace_id=trace_id,
         )
 
         claims = self._authorization_jwt_verifier.verify(
@@ -93,7 +92,7 @@ class IngestController(IIngestController):
             event_source=incoming.source,
             event_type=incoming.type,
         )
-        logger.debug("JWT claims verified and filtered", claims_count=len(claims), trace_id=trace_id)
+        logger.debug("JWT claims verified and filtered", claims_count=len(claims))
 
         if not isinstance(incoming.data, dict):
             raise BadRequestError("Event data must be a JSON object")
@@ -112,14 +111,13 @@ class IngestController(IIngestController):
             source=incoming.source,
             event_type=incoming.type,
             event_id=incoming.id,
-            trace_id=trace_id,
         )
 
     async def ingest_booking(self, *, headers: Mapping[str, str], body: bytes) -> None:
         # Extract trace_id from HTTP headers
         trace_id = extract_trace_id_from_headers(dict(headers))
 
-        logger.info("Started Booking ingest", trace_id=trace_id)
+        logger.info("Started Booking ingest")
         if not hmac.compare_digest(self._settings.booking_api_key, headers.get("Authorization", "")):
             logger.warning("Booking ingest failed: invalid API key")
             raise UnauthorizedError("Invalid Booking API key")
@@ -135,7 +133,6 @@ class IngestController(IIngestController):
             source=incoming.source,
             event_type=incoming.type,
             event_id=incoming.id,
-            trace_id=trace_id,
         )
 
         if not isinstance(incoming.data, dict):
@@ -164,7 +161,6 @@ class IngestController(IIngestController):
             event_type=incoming.type,
             event_id=incoming.id,
             booking_id=booking_uid,
-            trace_id=trace_id,
         )
 
     def _validated_booking_created(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -182,7 +178,7 @@ class IngestController(IIngestController):
 
     async def ingest_calcom(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
-        logger.info("Started cal.com ingest", trace_id=trace_id)
+        logger.info("Started cal.com ingest")
 
         with _tracer.start_as_current_span("receiver.validate_webhook") as span:
             span.set_attribute("source", "calcom")
@@ -214,7 +210,6 @@ class IngestController(IIngestController):
             trigger_event=webhook.get("triggerEvent"),
             event_type=str(event.event_type),
             booking_id=event.booking_uid,
-            trace_id=trace_id,
         )
 
     def _is_valid_calcom_signature(self, *, body: bytes, signature: str) -> bool:
@@ -260,7 +255,7 @@ class IngestController(IIngestController):
     async def ingest_unisender_go(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
 
-        logger.info("Started UniSender Go ingest", trace_id=trace_id)
+        logger.info("Started UniSender Go ingest")
 
         if not body:
             logger.warning("UniSender Go ingest failed: empty request body")
@@ -295,12 +290,12 @@ class IngestController(IIngestController):
                     data=event_copy,
                     trace_id=trace_id,
                 )
-        logger.info("UniSender Go ingest completed", trace_id=trace_id)
+        logger.info("UniSender Go ingest completed")
 
     async def ingest_getstream(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
 
-        logger.info("Started Getstream ingest", trace_id=trace_id)
+        logger.info("Started Getstream ingest")
         signature = headers.get("X-SIGNATURE")
         if signature is None:
             raise UnauthorizedError("Missing X-SIGNATURE header")
@@ -315,11 +310,11 @@ class IngestController(IIngestController):
             data=data,
             trace_id=trace_id,
         )
-        logger.info("Getstream ingest completed", trace_id=trace_id)
+        logger.info("Getstream ingest completed")
 
     async def ingest_admin(self, *, headers: Mapping[str, str], body: bytes) -> None:
         trace_id = extract_trace_id_from_headers(dict(headers))
-        logger.info("Started Admin ingest", trace_id=trace_id)
+        logger.info("Started Admin ingest")
 
         token = self._bearer_token(headers)
         if not hmac.compare_digest(self._settings.admin_api_key, token):
@@ -349,7 +344,6 @@ class IngestController(IIngestController):
             source=incoming.source,
             event_type=incoming.type,
             event_id=incoming.id,
-            trace_id=trace_id,
         )
 
     def _is_valid_getstream_signature(self, *, body: bytes, signature: str) -> bool:
