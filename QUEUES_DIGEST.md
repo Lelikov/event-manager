@@ -17,7 +17,8 @@
 | `events.jitsi` | `jitsi*` | `*` | все Jitsi-события |
 | `events.mail` | `unisender-go` | `unisender.*` | события UniSender |
 | `events.chat` | `getstream` | `getstream.*` | события GetStream |
-| `events.user.email` | `admin` | `user.email.*` | запросы смены email клиента |
+| `events.user.email` | `admin` | `user.email.*` | запросы смены email клиента (fan-out → event-users) |
+| `events.user.email.booking` | `admin` | `user.email.*` | fan-out `user.email.change_requested` → event-booking (обновление `Attendee.email` в cal.com) |
 | `events.user.email` | `db-sync` | `user.upserted` | trigger-driven user-sync (от event-db-sync; **публикуется напрямую в RabbitMQ**, мимо event-receiver) |
 | `events.user.synced` | `event-users` | `user.synced` | результат upsert пользователя (от event-users; **публикуется напрямую в RabbitMQ**, мимо event-receiver) |
 | `events.unrouted` | fallback | fallback | все события без match по rules |
@@ -84,21 +85,26 @@
 
 ## events.user.email
 
-Две группы событий на одной очереди (один консьюмер — `event-users`):
+Две группы событий на одном routing key (fan-out на две очереди для `user.email.*`):
 
-1. Запросы смены email клиента:
+1. Запросы смены email клиента (`user.email.change_requested`):
    - `source_pattern = "admin"`, `type_pattern = "user.email.*"`
    - Поступают через эндпоинт `POST /event/admin` (auth: static API key в заголовке `Authorization`).
+   - Payload содержит опциональное поле `booking_uid: str | null`.
+   - **Fan-out**: routing key `events.user.email` привязан к ДВУМ очередям:
+     - `events.user.email` — потребитель `event-users` (обновление `users.email`, CRM outbox; `booking_uid` игнорируется);
+     - `events.user.email.booking` — потребитель `event-booking` (обновление `Attendee.email` в cal.com, только при наличии `booking_uid`).
+   - event-receiver прозрачно пробрасывает `booking_uid` в data; изменений в event-receiver нет.
 2. Trigger-driven user-sync (`user.upserted`, source `db-sync`):
    - Очередь/routing key `events.user.email` **переиспользуется** — для `user.upserted`
-     отдельной очереди НЕТ.
+     отдельной очереди НЕТ; fan-out на `events.user.email.booking` для этого типа не требуется.
    - **Эти события НЕ проходят через event-receiver**: `event-db-sync` публикует
      `user.upserted` напрямую в RabbitMQ (priority CRITICAL). Соответствующее правило
      `("db-sync","user.upserted") → events.user.email` живёт в
      `event_schemas.queues.ROUTING_RULES` (источник истины), но физически событие
      не проходит через ingress.
 
-Потребитель: `event-users` (FastStream RabbitMQ consumer).
+Потребители: `event-users` (очередь `events.user.email`), `event-booking` (очередь `events.user.email.booking`).
 
 ## events.user.synced
 
