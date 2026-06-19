@@ -18,6 +18,8 @@
 | `events.mail` | `unisender-go` | `unisender.*` | события UniSender |
 | `events.chat` | `getstream` | `getstream.*` | события GetStream |
 | `events.user.email` | `admin` | `user.email.*` | запросы смены email клиента |
+| `events.user.email` | `db-sync` | `user.upserted` | trigger-driven user-sync (от event-db-sync; **публикуется напрямую в RabbitMQ**, мимо event-receiver) |
+| `events.user.synced` | `event-users` | `user.synced` | результат upsert пользователя (от event-users; **публикуется напрямую в RabbitMQ**, мимо event-receiver) |
 | `events.unrouted` | fallback | fallback | все события без match по rules |
 
 ## events.booking.lifecycle
@@ -82,12 +84,34 @@
 
 ## events.user.email
 
-События запроса смены email клиента:
-- `source_pattern = "admin"`
-- `type_pattern = "user.email.*"`
+Две группы событий на одной очереди (один консьюмер — `event-users`):
 
-Поступают через эндпоинт `POST /event/admin` (auth: static API key в заголовке `Authorization`).
+1. Запросы смены email клиента:
+   - `source_pattern = "admin"`, `type_pattern = "user.email.*"`
+   - Поступают через эндпоинт `POST /event/admin` (auth: static API key в заголовке `Authorization`).
+2. Trigger-driven user-sync (`user.upserted`, source `db-sync`):
+   - Очередь/routing key `events.user.email` **переиспользуется** — для `user.upserted`
+     отдельной очереди НЕТ.
+   - **Эти события НЕ проходят через event-receiver**: `event-db-sync` публикует
+     `user.upserted` напрямую в RabbitMQ (priority CRITICAL). Соответствующее правило
+     `("db-sync","user.upserted") → events.user.email` живёт в
+     `event_schemas.queues.ROUTING_RULES` (источник истины), но физически событие
+     не проходит через ingress.
+
 Потребитель: `event-users` (FastStream RabbitMQ consumer).
+
+## events.user.synced
+
+Результат upsert пользователя после `user.upserted` (несёт разрешённый `user_id`):
+- `source_pattern = "event-users"`, `type_pattern = "user.synced"`
+- **НЕ проходит через event-receiver**: `event-users` публикует `user.synced` напрямую
+  в RabbitMQ (priority CRITICAL). Правило `("event-users","user.synced") → events.user.synced`
+  есть в `event_schemas.queues.ROUTING_RULES`.
+- Очередь новая, saver-owned.
+
+Потребитель: `event-saver` — бэкфиллит `bookings.organizer_user_id` / `client_user_id` по
+email участника (join через `events.payload->'normalized'->'participants'`), NULL-guarded и
+идемпотентно. HTTP-poll `UserIdBackfillService` остаётся медленной подстраховкой.
 
 ## events.unrouted
 
